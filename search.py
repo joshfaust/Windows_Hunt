@@ -51,6 +51,7 @@ def aggregateCommands(o_dir):
             else:
                 commands[commands_index] = cmd
                 commands_index += 1
+    pbar.close()
     return num_lines
 
 #=======================================#
@@ -175,6 +176,7 @@ def procmonInputAnalysis(p_file, o_dir):
             bad += 1
             pbar.update(1)
 
+    pbar.close()
     keyOutFile.close()
 
 #=======================================#
@@ -244,6 +246,8 @@ def analyze(o_dir):
                 pbar.update(1)
 
         df.to_excel(f"{o_dir}/data.xlsx")
+        pbar.close()
+        
     return fun_index
 
 
