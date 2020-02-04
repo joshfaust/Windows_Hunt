@@ -1,2 +1,38 @@
-== Process Information Hunter
-Process Research
+= Process Information Hunter
+<joshua.faust@sevrosecurity.com>
+v1.0.0
+:toc:
+
+== Concept
+I needed a simple way to enumerate permissions on certian registry keys. Specfically, this script takes in a CSV file that was a product of a `Procmon.exe` analysis. Sample configurations for this analysis can be found in the `config` directory. 
+
+[code, raw]
+----
++---------------+      +----------------+
+|               |      |  Report on     |
+|   Search.py   |      |  FullControl   |
+|               |      |  Access        |
++-------+-------+      +-------+--------+
+        |                      |
+        |                      |
+        |                      |
++-------+-------+      +-------+--------+
+|Procmon CSV    |      | Pull ACL's for |
+|output Cleanup +----->+ All HKLM Keys  |
++---------------+      +----------------+
+----
+
+== Usage
+
+[code, raw]
+----
+usage: search.py [-h] -p  -o
+
+optional arguments:
+  -h, --help       show this help message and exit
+  -p , --procmon   Path to the Procmon Output File (CSV)
+  -o , --out       Output location for results.
+----
+
+* Example:
+** _python3 search.py -p procmon_output.csv -o /tmp/output_
