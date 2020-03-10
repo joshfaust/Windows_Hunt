@@ -27,10 +27,10 @@ global mutex, aclOutFile
 # Pulls ACLS for all cleaned keys       #
 #=======================================#
 ## aggregateCommands --> threadCommands --> runCommands --> writeToFile
-def aggregateCommands(o_dir):
+def aggregateCommands(o_dir, total_threads):
     global mutex
     num_lines = sum(1 for line in open(f'{o_dir}/cleaned_keys.txt'))
-    commands = [None] * 5
+    commands = [None] * total_threads
     commands_index = 0
 
     pbar = tqdm(total=num_lines)
@@ -42,12 +42,12 @@ def aggregateCommands(o_dir):
             cmd = f"powershell.exe -exec bypass \"Get-Acl '{path}' | format-list\""
 
             # Send the commands list to the threading function each time it fills up with new registry keys.
-            if (commands_index == 5):
+            if (commands_index == total_threads):
                 while (mutex.locked()):
                     time.sleep(1)
                 threadCommands(commands)
                 commands_index = 0
-                pbar.update(5)
+                pbar.update(total_threads)
             else:
                 commands[commands_index] = cmd
                 commands_index += 1
@@ -59,31 +59,15 @@ def aggregateCommands(o_dir):
 #=======================================#
 def threadCommands(commands):
     global mutex
+    threads = []
+    tot_commands = len(commands)
 
-    # Thread 5 commands at a time.
-    p0 = threading.Thread(target=runCommands, args=(commands[0],))
-    p1 = threading.Thread(target=runCommands, args=(commands[1],))
-    p2 = threading.Thread(target=runCommands, args=(commands[2],))
-    p3 = threading.Thread(target=runCommands, args=(commands[3],))
-    p4 = threading.Thread(target=runCommands, args=(commands[4],))
-
-    p0.daemon = True
-    p1.daemon = True
-    p2.daemon = True
-    p3.daemon = True
-    p4.daemon = True
-
-    p0.start()
-    p1.start()
-    p2.start()
-    p3.start()
-    p4.start()
-
-    p0.join()  # Wait for the 1st thread to finalize before continuing.
-    p1.join()  # Wait for the 2nd thread to finalize before continuing.
-    p2.join()  # Wait for the 3rd thread to finalize before continuing.
-    p3.join()  # Wait for the 4th thread to finalize before continuing.
-    p4.join()  # Wait for the 5th thread to finalize before continuing.
+    for i in range(tot_commands):
+        t = threading.Thread(target=runCommands, args=(commands[i],))
+        t.start()
+        threads.append(t)
+        if (i == (tot_commands - 1)):
+            t.join()
 
 #=======================================#
 # Runs any command called in new thread #
@@ -130,10 +114,7 @@ def procmonInputAnalysis(p_file, o_dir):
 
     pbar = tqdm(total=dataframe_length)
     pbar.set_description("Analyzing Procmon Data")
-    good = 0
-    bad = 0
-    previous_paths = [None] * 5            # Designed to remove saving duplicate key paths (Save only 5 paths)
-    paths_index = 0
+    previous_paths = set()           # Designed to remove saving duplicate key paths (Save only 5 paths)
 
     for i in range(0, dataframe_length):
         # Pull in dataframe content we're interested in.
@@ -142,38 +123,35 @@ def procmonInputAnalysis(p_file, o_dir):
         operation = str(data['Operation'][i]).lower()
 
         if (proc_name not in bad_process_names and operation not in bad_operation_names):
-            dir_count = len(re.findall(r'\\', path))
-            path = path.split("\\")
-            clean_path = ""
+            
+            if (".exe" not in path and ".dll" not in path):
+                # Cleanup Registry Key Path
+                dir_count = len(re.findall(r'\\', path))
+                path = path.split("\\")
+                clean_path = ""
 
-            for j in range(0, dir_count):
-                if (j == (dir_count-1)):
-                    clean_path += path[j]
-                elif (j == 0):
-                    clean_path += path[j] + ":\\"
-                else:
-                    clean_path += path[j] + "\\"
+                for j in range(0, dir_count):
+                    if (j == (dir_count-1)):
+                        clean_path += path[j]
+                    elif (j == 0):
+                        clean_path += path[j] + ":\\"
+                    else:
+                        clean_path += path[j] + "\\"
+            else:
+                # Send the .DLL/.EXE to be analyzed. 
+                clean_path = path
 
             # Make sure this is not a duplicate key before saving
             if (clean_path not in previous_paths):
                 # Save key to cleaned keys:
                 keyOutFile.write(clean_path + "\n")
 
-                # Save key to previous paths:
-                if ((paths_index % 5) == 0 and paths_index != 0):
-                    paths_index = 0
-                previous_paths[paths_index] = clean_path
-                paths_index += 1
-
-                good += 1
                 pbar.update(1)
 
             else:
-                bad += 1
                 pbar.update(1)
 
         else:
-            bad += 1
             pbar.update(1)
 
     pbar.close()
@@ -182,7 +160,7 @@ def procmonInputAnalysis(p_file, o_dir):
 #=======================================#
 # Look for objective issues             #
 #=======================================#
-def analyze(o_dir):
+def analyze_acls(o_dir):
     df = pd.DataFrame(columns=["key", "owner", "group", "access"])
     num_lines = sum(1 for line in open(f'{o_dir}/acls.txt'))
 
@@ -194,7 +172,7 @@ def analyze(o_dir):
         owner = None                # Placeholder for owner
         group = None                # Placeholder for group
         access = []                 # Placeholder for access control list
-        user_full_control = False   # Placeholder to determine if user has full permissions
+        add = False   # Placeholder to determine if user has full permissions
         pbar = tqdm(total=num_lines)
         pbar.set_description("Looking for Evil")
 
@@ -213,28 +191,32 @@ def analyze(o_dir):
                     group = str(line.split(": ")[1]).strip()
 
                 # Determine Access
-                if (permission_index >= 1 and ":" not in line.lower()):
+                if (permission_index >= 1 and ":" not in line.lower() and "------" not in line.lower()):
                     access.append(str(line).strip())
                     permission_index += 1
-                    if ("users allow" in line.lower() and "fullcontrol" in line.lower()):
-                        user_full_control = True
-
-                if ("access" in line.lower()):
-                    access.append(str(line.split(": ")[1]).strip())
-                    permission_index += 1
-                    if ("users allow" in line.lower() and "fullcontrol" in line.lower()):
-                        user_full_control = True
-
-                if ("----" in line.lower() and key != None and owner != None and group != None and len(access) > 1):
-                    str_access = str(access)
+                    user_full_control = check_permission(line)
                     if (user_full_control):
+                        add = True
+
+                if ("access" in line.lower()):              # Check if we are at the ACCESS portion:
+                    access.append(str(line.split(": ")[1]).strip())
+                    permission_index += 1                   # Denote which permission we are at
+                    user_full_control = check_permission(line)
+                    if (user_full_control):
+                        add = True
+
+                #if ("----" in line.lower() and key != None and owner != None and group != None and len(access) > 1):
+                if ("-------" in line.lower()):
+                    str_access = str(access)
+
+                    if (add):
                         df = df.append({"key": key, "owner": owner, "group": group, "access": str_access}, ignore_index=True)
                         fun_index += 1
 
                     path = None
                     owner = None
                     group = None
-                    user_full_control = False
+                    add = False
                     permission_index = 0
                     total_index += 1
                     access.clear()
@@ -250,6 +232,108 @@ def analyze(o_dir):
         
     return fun_index
 
+#=======================================#
+# Look for objective issues             #
+#=======================================#
+def analyze_acls_from_file(o_dir, file):
+    df = pd.DataFrame(columns=["key", "owner", "group", "access"])
+    num_lines = sum(1 for line in open(file))
+
+    with open(file, "r") as f:
+        permission_index = 0        # Index of determining number of permissions between Access and Audit
+        total_index = 0             # Index of all frames we have built
+        fun_index = 0               # Index of Full_Control Registry Keys
+        key = None                  # Placeholder for key
+        owner = None                # Placeholder for owner
+        group = None                # Placeholder for group
+        access = []                 # Placeholder for access control list
+        add = False   # Placeholder to determine if user has full permissions
+        pbar = tqdm(total=num_lines)
+        pbar.set_description("Looking for Evil")
+
+        for line in f:
+            try:
+                # Determine Path
+                if ("path" in line.lower()):
+                    key = str(line.split(": ")[1]).strip()
+
+                # Determine Owner
+                if ("owner" in line.lower()):
+                    owner = str(line.split(": ")[1]).strip()
+
+                # Determine Group
+                if ("group" in line.lower()):
+                    group = str(line.split(": ")[1]).strip()
+
+                # Determine Access
+                if (permission_index >= 1 and ":" not in line.lower() and "------" not in line.lower()):
+                    access.append(str(line).strip())
+                    permission_index += 1
+                    user_full_control = check_permission(line)
+                    if (user_full_control):
+                        add = True
+
+                if ("access" in line.lower()):              # Check if we are at the ACCESS portion:
+                    access.append(str(line.split(": ")[1]).strip())
+                    permission_index += 1                   # Denote which permission we are at
+                    user_full_control = check_permission(line)
+                    if (user_full_control):
+                        add = True
+
+                #if ("----" in line.lower() and key != None and owner != None and group != None and len(access) > 1):
+                if ("-------" in line.lower()):
+                    str_access = str(access)
+
+                    if (add):
+                        df = df.append({"key": key, "owner": owner, "group": group, "access": str_access}, ignore_index=True)
+                        fun_index += 1
+
+                    path = None
+                    owner = None
+                    group = None
+                    add = False
+                    permission_index = 0
+                    total_index += 1
+                    access.clear()
+
+                pbar.update(1)
+
+            except Exception as e:
+                pass
+                pbar.update(1)
+
+        df.to_excel(f"{o_dir}/data.xlsx")
+        pbar.close()
+        
+    return fun_index
+
+# Check the permissions of an object
+def check_permission(line):
+    tmp = False
+    users = ["users", "everyone", "interactive", "authenticated"]
+    permissions = ["fullcontrol", "write", "changepermissions", "takeownership", "traverse"]
+
+    for user in users:
+        for permission in permissions:
+            if (user in line.lower() and permission in line.lower()):
+                tmp = True
+                break
+        if (tmp):
+            break
+
+    return tmp
+
+# remove duplicates from a file. 
+def remove_duplicates_from_file(f_path, o_path):
+    lines_seen = set()
+    out = f"{o_path}/{os.path.basename(f_path)}.cleaned"
+    outfile = open(out, "w")
+    for line in open(f_path, "r"):
+        line = line.strip()
+        if (line not in lines_seen):
+            outfile.write(line + "\n")
+            lines_seen.add(line)
+    outfile.close()
 
 #=======================================#
 # MAIN                                  #
@@ -257,39 +341,51 @@ def analyze(o_dir):
 if __name__ == "__main__":
     try:
         parser = argparse.ArgumentParser()
-        parser.add_argument("-p", "--procmon", dest="p", metavar='', required=True, help="Path to the Procmon Output File (CSV)")
+        me = parser.add_mutually_exclusive_group()
+        me.add_argument("-p", "--procmon", dest="p", default=None, metavar='', required=False, help="Path to the Procmon Output File (CSV)")
+        me.add_argument("-a", "--acl", dest="acl", default=None, metavar='', required=False, help="Analyze a singluar acls.txt file")
+        parser.add_argument("-t", "--threads", dest="threads",  type=int, default=10, required=False, help="Defined number of threads (Max 100). Default=10")
         parser.add_argument("-o", "--out", dest="o", metavar='', required=True, help="Output location for results.")
         args = parser.parse_args()
 
-        # Check to make sure Procmon File is CSV:
-        with open(args.p, "r") as f:
-            if (not csv.Sniffer().has_header(f.read(2014))):
-                print(f"[!] {str(args.p).strip()} is not a CSV file.")
-                exit(1)
 
         # Check to make sure output path is valid:
         if (not os.path.exists(args.o)):
             print(f"[!] {args.o} does not exist")
             exit(1)
 
-        # Initialize the Global Variables
-        mutex = threading.Lock()
-        aclOutFile = open(f"{args.o}/acls.txt", "wb")
+        if (args.p != None):
+            # Check to make sure Procmon File is CSV:
+            with open(args.p, "r") as f:
+                if (not csv.Sniffer().has_header(f.read(2014))):
+                    print(f"[!] {str(args.p).strip()} is not a CSV file.")
+                    exit(1)
 
-        # Start the Enumeration. 
-        procmonInputAnalysis(args.p, args.o)
-        total_analyzed = aggregateCommands(args.o)
-        aclOutFile.close()
-        interesting_items = analyze(args.o)
+            # Initialize the Global Variables
+            mutex = threading.Lock()
+            aclOutFile = open(f"{args.o}/acls.txt", "wb")
 
-        print('-' * 125)
-        print(f"\n[i] A total of {total_analyzed} Registy Keys Were Analyzed.")
-        print(f"[i] {interesting_items} Were found to be improperly configured.")
-        print("[i] Output Files:")
-        print(f"\t+ {args.o}acls.txt:\t\tRaw output of Access Control Listings")
-        print(f"\t+ {args.o}cleaned_keys.txt:\tClean verions (no duplicates) or the Procmon Output")
-        print(f"\t+ {args.o}data.xlsx:\t\tKeys denoted as improperly configured/interesting")
+            # Start the Enumeration. 
+            procmonInputAnalysis(args.p, args.o)                        # Analyze the Procmon CSV File and pull out paths
+            total_analyzed = aggregateCommands(args.o, args.threads)    # Send paths to aggregateCommands with totla Thread Count
+            aclOutFile.close()
+            interesting_items = analyze_acls(args.o)
 
+            print('-' * 125)
+            print(f"\n[i] A total of {total_analyzed} Registy Keys Were Analyzed.")
+            print(f"[i] {interesting_items} Were found to be improperly configured.")
+            print("[i] Output Files:")
+            print(f"\t+ {args.o}acls.txt:\t\tRaw output of Access Control Listings")
+            print(f"\t+ {args.o}cleaned_keys.txt:\tClean verions (no duplicates) or the Procmon Output")
+            print(f"\t+ {args.o}data.xlsx:\t\tKeys denoted as improperly configured/interesting")
+            
+        if (args.acl != None):
+            interesting_items = analyze_acls_from_file(args.o, args.acl)
+            print('-' * 125)
+            print(f"[i] {interesting_items} Were found to be improperly configured.")
+            print("[i] Output Files:")
+            print(f"\t+ {args.o}data.xlsx:\t\tKeys denoted as improperly configured/interesting")
+            
         exit(0)
 
     except Exception as e:
