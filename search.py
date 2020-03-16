@@ -145,7 +145,7 @@ def procmonInputAnalysis(p_file, o_dir):
             if (clean_path not in previous_paths):
                 # Save key to cleaned keys:
                 keyOutFile.write(clean_path + "\n")
-
+                previous_paths.add(clean_path)
                 pbar.update(1)
 
             else:
