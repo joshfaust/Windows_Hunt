@@ -1,13 +1,23 @@
 import pandas as pd
 import subprocess
 import os
+import sys
 import re
 import time
 import threading
 import argparse
 import csv
+import linecache
 import openpyxl
+import ctypes
+import win32security
+import win32api
+import win32con as con
+from colorama import Fore, init
+from pathlib import Path
+from enum import Enum
 from tqdm import tqdm
+init()
 
 #---------------------------------------------------#
 # Windows Process Information:                      #
@@ -23,36 +33,174 @@ from tqdm import tqdm
 # GLOBAL VARIABLES
 global mutex, aclOutFile
 
+
+class windows_security_enums(Enum):
+    FullControl               =   ctypes.c_uint32(0x1f01ff)
+    modify                    =   ctypes.c_uint32(0x0301bf)
+    ReadExecAndSynchronize    =   ctypes.c_uint32(0x1200a9)
+    Synchronize               =   ctypes.c_uint32(0x100000)
+    ReadAndExecute            =   ctypes.c_uint32(0x0200a9)
+    ReadAndWrite              =   ctypes.c_uint32(0x02019f)
+    Read                      =   ctypes.c_uint32(0x020089)
+    Write                     =   ctypes.c_uint32(0x000116)
+
+class nt_security_enums(Enum):
+    GenericRead               =   ctypes.c_uint32(0x80000000)
+    GenericWrite              =   ctypes.c_uint32(0x40000000)
+    GenericExecute            =   ctypes.c_uint32(0x20000000)
+    GenericAll                =   ctypes.c_uint32(0x10000000)
+    MaximumAllowed            =   ctypes.c_uint32(0x02000000)
+    AccessSystemSecurity      =   ctypes.c_uint32(0x01000000)
+    Synchronize               =   ctypes.c_uint32(0x00100000)
+    WriteOwner                =   ctypes.c_uint32(0x00080000)
+    WriteDAC                  =   ctypes.c_uint32(0x00040000)
+    ReadControl               =   ctypes.c_uint32(0x00020000)
+    Delete                    =   ctypes.c_uint32(0x00010000)
+    WriteAttributes           =   ctypes.c_uint32(0x00000100)
+    ReadAttributes            =   ctypes.c_uint32(0x00000080)
+    DeleteChild               =   ctypes.c_uint32(0x00000040)
+    ExecuteTraverse           =   ctypes.c_uint32(0x00000020)
+    WriteExtendedAttributes   =   ctypes.c_uint32(0x00000010)
+    ReadExtendedAttributes    =   ctypes.c_uint32(0x00000008)
+    AppendDataAddSubdirectory =   ctypes.c_uint32(0x00000004)
+    WriteDataAddFile          =   ctypes.c_uint32(0x00000002)
+    ReadDataListDirectory     =   ctypes.c_uint32(0x00000001)
+
+CONVENTIONAL_ACES = {
+  win32security.ACCESS_ALLOWED_ACE_TYPE : "ALLOW", 
+  win32security.ACCESS_DENIED_ACE_TYPE : "DENY"
+}
+
+
+def get_acl_list(path):
+    try:
+        print(path)
+        # If the path is a Registry key, do something very different:
+        if ("hklm" in path.lower()):
+            path = path.split(":\\")[1]
+            key = win32api.RegOpenKey(con.HKEY_LOCAL_MACHINE, path, 0,  con.KEY_ENUMERATE_SUB_KEYS | con.KEY_QUERY_VALUE | con.KEY_READ)
+            sd = win32api.RegGetKeySecurity(key, win32security.DACL_SECURITY_INFORMATION | win32security.OWNER_SECURITY_INFORMATION)
+            dacl = sd.GetSecurityDescriptorDacl()
+            owner_sid = sd.GetSecurityDescriptorOwner()
+
+            for n_ace in range (dacl.GetAceCount()):
+                ace = dacl.GetAce (n_ace)
+                (ace_type, ace_flags) = ace[0]
+
+                mask = 0
+                domain = ""
+                name = ""
+                ascii_mask = ""
+                acls = ""
+
+                if ace_type in CONVENTIONAL_ACES:
+                    mask, sid = ace[1:]
+                else:
+                    mask, object_type, inherited_object_type, sid = ace[2]
+
+                name, domain, type = win32security.LookupAccountSid (None, owner_sid)
+                sddl_string = win32security.ConvertSecurityDescriptorToStringSecurityDescriptor(sd, win32security.SDDL_REVISION_1, win32security.DACL_SECURITY_INFORMATION)
+
+                pwrshell_cmd = f"powershell.exe -exec bypass (ConvertFrom-SddlString -Sddl '{sddl_string}').DiscretionaryAcl"
+                data = subprocess.Popen(pwrshell_cmd, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                out, err = data.communicate()
+                out = out.decode("utf-8")
+
+                final = (f"Path  : {path}\n{out}\n")
+                writeToFile(final)
+
+        # If the path is a file/folder path:
+        else:
+
+            acls = "Access  : "
+            gfso = win32security.GetFileSecurity(path, win32security.DACL_SECURITY_INFORMATION)
+            dacl = gfso.GetSecurityDescriptorDacl()
+
+            for n_ace in range (dacl.GetAceCount()):
+                ace = dacl.GetAce (n_ace)
+                (ace_type, ace_flags) = ace[0]
+
+                mask = 0
+                domain = ""
+                name = ""
+                ascii_mask = ""
+
+                if ace_type in CONVENTIONAL_ACES:
+                    mask, sid = ace[1:]
+                else:
+                    mask, object_type, inherited_object_type, sid = ace[1:]
+
+                name, domain, type = win32security.LookupAccountSid (None, sid)
+
+                # Enumerate windows_security_enums
+                for enum_obj in windows_security_enums:
+                    if (ctypes.c_uint32(mask).value == enum_obj.value.value):
+                        access = CONVENTIONAL_ACES.get (ace_type, "OTHER")
+                        ascii_mask = enum_obj.name
+                        acls += (f"{domain}\\{name} {access} {ascii_mask}\n")
+
+                # Enumerate nt_security_permissions
+                for enum_obj in nt_security_enums:
+                    if (ctypes.c_uint32(mask).value == enum_obj.value.value):
+                        access = CONVENTIONAL_ACES.get (ace_type, "OTHER")
+                        ascii_mask = enum_obj.name
+                        acls += (f"{domain}\\{name} {access} {ascii_mask}\n")
+
+            data = (f"\nPath  : {path}\n{acls}\n")
+            writeToFile(data)
+
+    except Exception as e:
+        print("=" * 100)
+        print(path)
+        print("=" * 100)
+        print_exception()
+        pass
+
+
 #=======================================#
 # Pulls ACLS for all cleaned keys       #
 #=======================================#
 ## aggregateCommands --> threadCommands --> runCommands --> writeToFile
 def aggregateCommands(o_dir, total_threads):
     global mutex
-    num_lines = sum(1 for line in open(f'{o_dir}/cleaned_keys.txt'))
+    total_number_of_paths = sum(1 for line in open(f'{o_dir}/cleaned_keys.txt'))
     commands = [None] * total_threads
     commands_index = 0
+    total_commands_sent = 0
 
-    pbar = tqdm(total=num_lines)
+    pbar = tqdm(total=total_number_of_paths)
     pbar.set_description("Analyzing ACL's")
 
     with open(f"{o_dir}/cleaned_keys.txt", "r") as f:
-        for path in f:
-            path = path.strip()
-            cmd = f"powershell.exe -exec bypass \"Get-Acl '{path}' | format-list\""
 
-            # Send the commands list to the threading function each time it fills up with new registry keys.
-            if (commands_index == total_threads):
-                while (mutex.locked()):
+        for path in f:  # For each object in cleaned keys
+            
+            commands_left = total_number_of_paths - total_commands_sent
+            path = path.strip()
+            cmd = path
+
+             # If the number of commands loaded into commands == # of threads
+            if (commands_index == total_threads):      
+
+                while (mutex.locked()):                 # While there is a mutex lock, sleep for 1 second.
                     time.sleep(1)
-                threadCommands(commands)
-                commands_index = 0
-                pbar.update(total_threads)
+
+                threadCommands(commands)                # Send the next list of commands
+                commands_index = 0                      # Reset the commands index counter to 0 to start loading new commands
+                pbar.update(total_threads)              # Updates the progress bar
+
+                # If the number of commands (paths) are less than the allocated threads, decrese and send the last commands
+                if (commands_left < total_threads):
+                    commands = [None] * commands_left   # commands list length reset to number of commands left
+                    total_threads = commands_left       # total_threads reset to number of commands left
+
             else:
                 commands[commands_index] = cmd
                 commands_index += 1
+                total_commands_sent += 1
+
     pbar.close()
-    return num_lines
+    return total_number_of_paths
 
 #=======================================#
 # Thread the Powershell ACL lookups     #
@@ -63,25 +211,17 @@ def threadCommands(commands):
     tot_commands = len(commands)
 
     for i in range(tot_commands):
-        t = threading.Thread(target=runCommands, args=(commands[i],))
+        t = threading.Thread(target=get_acl_list, args=(commands[i],))
+        t.daemon = True
         t.start()
         threads.append(t)
         if (i == (tot_commands - 1)):
             t.join()
 
 #=======================================#
-# Runs any command called in new thread #
-#=======================================#
-def runCommands(cmd):
-    global mutex
-    data = subprocess.Popen(cmd, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    out, err = data.communicate()
-    writeToFile(cmd, out)
-
-#=======================================#
 # Write to File Function for threads    #
 #=======================================#
-def writeToFile(command, data):
+def writeToFile(data):
     global mutex, aclOutFile
     try:
         # wait until the file is unlocked.
@@ -89,12 +229,11 @@ def writeToFile(command, data):
             time.sleep(1)
 
         mutex.acquire()
-        aclOutFile.write(str(command).encode("utf-8") + b"\n")
         aclOutFile.write(data)
-        aclOutFile.write(b"-" * 140 + b"\n")
+        aclOutFile.write("-" * 100)
         mutex.release()
     except Exception as e:
-        print(f"[!] ERROR: {e}")
+        print_exception()
         exit(1)
 
 #=======================================#
@@ -140,16 +279,19 @@ def procmonInputAnalysis(p_file, o_dir):
             else:
                 # Send the .DLL/.EXE to be analyzed. 
                 clean_path = path
+                base_path = os.path.dirname(clean_path)
 
             # Make sure this is not a duplicate key before saving
             if (clean_path not in previous_paths):
-                # Save key to cleaned keys:
+                # Save key to cleaned keys
                 keyOutFile.write(clean_path + "\n")
+                previous_paths.add(clean_path)
 
-                pbar.update(1)
+            if ((".exe" in clean_path.lower() or ".dll" in clean_path.lower()) and base_path not in previous_paths):
+                keyOutFile.write(base_path + "\n")
+                previous_paths.add(base_path)
 
-            else:
-                pbar.update(1)
+            pbar.update(1)
 
         else:
             pbar.update(1)
@@ -335,6 +477,24 @@ def remove_duplicates_from_file(f_path, o_path):
             lines_seen.add(line)
     outfile.close()
 
+def clean_path(p):
+    outpath = re.sub(r"[\\]", r"\\\\", p)
+    outpath = re.sub(r"[/]", r"\\\\", outpath)
+    return outpath
+
+
+def print_exception():
+    exc_type, exc_obj, tb = sys.exc_info()
+    tmp_file = tb.tb_frame
+    lineno = tb.tb_lineno
+    filename = tmp_file.f_code.co_filename
+    linecache.checkcache(filename)
+    line = linecache.getline(filename, lineno, tmp_file.f_globals)
+    print(
+        f"{Fore.RED}EXCEPTION IN: {Fore.GREEN}{filename}\n\t[i] LINE: {lineno}, {line.strip()}\n\t[i] OBJECT: {exc_obj}{Fore.RESET}"
+    )
+
+
 #=======================================#
 # MAIN                                  #
 #=======================================#
@@ -363,10 +523,10 @@ if __name__ == "__main__":
 
             # Initialize the Global Variables
             mutex = threading.Lock()
-            aclOutFile = open(f"{args.o}/acls.txt", "wb")
+            aclOutFile = open(f"{args.o}/acls.txt", "w")
 
             # Start the Enumeration. 
-            procmonInputAnalysis(args.p, args.o)                        # Analyze the Procmon CSV File and pull out paths
+            #procmonInputAnalysis(args.p, args.o)                        # Analyze the Procmon CSV File and pull out paths
             total_analyzed = aggregateCommands(args.o, args.threads)    # Send paths to aggregateCommands with totla Thread Count
             aclOutFile.close()
             interesting_items = analyze_acls(args.o)
@@ -389,5 +549,5 @@ if __name__ == "__main__":
         exit(0)
 
     except Exception as e:
-        print(f"[!] Error: {e}")
+        print_exception()
         exit(1)
