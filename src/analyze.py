@@ -2,6 +2,7 @@ import sys
 import os
 import re
 import time
+import getpass
 import threading
 import linecache
 import pandas as pd
@@ -27,6 +28,7 @@ class analyze:
         self.__final_report = f"{self.__output_dir}/evil.xlsx"
         self.__reg_enum = registry.registry_enumeration(self.__output_dir)
         self.__file_enum = filepaths.filepath_enumeration(self.__output_dir)
+        self.__username = str(getpass.getuser()).lower()
 
     # ===============================================#
     # Purpose: loads raw procmon csv output into a  #
@@ -214,8 +216,9 @@ class analyze:
     # ===============================================#
     def __check_permission(self, line):
         try:
+
             tmp = False
-            users = ["users", "everyone", "interactive", "authenticated"]
+            users = [self.__username, "users", "everyone", "interactive", "authenticated"]
             permissions = [
                 "fullcontrol",
                 "write",
@@ -227,8 +230,7 @@ class analyze:
                 "key_all_access",
                 "file_all_access",
                 "file_generic_write",
-                "generic_all",
-                "ds_write_prop",
+                "generic_all"
             ]
 
             for user in users:
@@ -269,15 +271,17 @@ class analyze:
                 pbar.set_description("Looking for Evil")
 
                 for line in f:
+                    line = line.lower()
                     try:
+
                         # Determine Path
-                        if "path" in line.lower():
+                        if "path" in line:
                             key = str(line.split(": ")[1]).strip()
 
                         # Determine Access
                         if (
                             permission_index >= 1
-                            and "--------end--------" not in line.lower()
+                            and "--------end--------" not in line
                         ):
                             access += "\n" + str(line).strip()
                             permission_index += 1
@@ -286,15 +290,15 @@ class analyze:
                                 add = True
 
                         if (
-                            "access:" in line.lower()
+                            "access:" in line
                         ):  # Check if we are at the ACCESS portion:
-                            access += line.split("ACCESS:")[1].strip()
+                            access += line.split("access:")[1].strip()
                             permission_index += 1  # Denote which permission we are at
                             user_full_control = self.__check_permission(line)
                             if user_full_control:
                                 add = True
 
-                        if "--------end--------" in line.lower():
+                        if "--------end--------" in line:
 
                             if add:
                                 df = df.append(
@@ -351,15 +355,17 @@ class analyze:
                 pbar.set_description("Looking for Evil")
 
                 for line in f:
+                    line = line.lower()
                     try:
+ 
                         # Determine Path
-                        if "path" in line.lower():
+                        if "path" in line:
                             key = str(line.split(": ")[1]).strip()
 
                         # Determine Access
                         if (
                             permission_index >= 1
-                            and "--------end--------" not in line.lower()
+                            and "--------end--------" not in line
                         ):
                             access += "\n" + str(line).strip()
                             permission_index += 1
@@ -368,15 +374,15 @@ class analyze:
                                 add = True
 
                         if (
-                            "access:" in line.lower()
+                            "access:" in line
                         ):  # Check if we are at the ACCESS portion:
-                            access += line.split("ACCESS:")[1].strip()
+                            access += line.split("access:")[1].strip()
                             permission_index += 1  # Denote which permission we are at
                             user_full_control = self.__check_permission(line)
                             if user_full_control:
                                 add = True
 
-                        if "--------end--------" in line.lower():
+                        if "--------end--------" in line:
 
                             if add:
                                 df = df.append(
