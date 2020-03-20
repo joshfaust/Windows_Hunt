@@ -1,0 +1,431 @@
+import sys
+import os
+import re
+import time
+import threading
+import linecache
+import pandas as pd
+from . import filepaths
+from . import registry
+from tqdm import tqdm
+from colorama import Fore, init
+
+init()
+
+# ---------------------------------------------------#
+# Name:     Analysis Class                          #
+# Purpose:  Conduct the overall DACL analysis       #
+# Author:   @jfaust0                                #
+# Website:  sevrosecurity.com                       #
+# ---------------------------------------------------#
+
+
+class analyze:
+    def __init__(self, o_dir):
+        self.name = "Analysis"
+        self.__output_dir = o_dir
+        self.__final_report = f"{self.__output_dir}/evil.xlsx"
+        self.__reg_enum = registry.registry_enumeration(self.__output_dir)
+        self.__file_enum = filepaths.filepath_enumeration(self.__output_dir)
+
+    # ===============================================#
+    # Purpose: loads raw procmon csv output into a  #
+    # Pandas dataframe, removed duplicates, and     #
+    # outputs all cleaned / de-duplicated objects   #
+    # to cleaned_paths.txt                          #
+    # Return: None                                  #
+    # ===============================================#
+    def parse_procmon_csv(self, p_file):
+        try:
+            # Names we do not want to enumerate
+            bad_process_names = [
+                "conhost.exe",
+                "dem.exe",
+                "svchost.exe",
+            ]  
+            # Operations we don't care about
+            bad_operation_names = [
+                "regclosekey",
+                "regqueryvalue",
+                "regenumvalue",
+                "regquerykeysecurity",
+                "regquerykey",
+            ]  # Operations we don't care about
+
+            keyOutFile = open(
+                f"{self.__output_dir}/cleaned_paths.txt", "w"
+            )  # Save the cleanup output to a file.
+            # DataFrame Objects
+            data = pd.read_csv(p_file)
+            headers = list(data)
+            dataframe_length = data.shape[0]
+
+            pbar = tqdm(total=dataframe_length)
+            pbar.set_description("Analyzing Procmon Data")
+            previous_paths = (set())  
+
+            for i in range(0, dataframe_length):
+                # Pull in dataframe content we're interested in.
+                path = str(data["Path"][i]).lower()
+                proc_name = str(data["Process Name"][i]).lower()
+                operation = str(data["Operation"][i]).lower()
+
+                if (
+                    proc_name not in bad_process_names
+                    and operation not in bad_operation_names
+                ):
+
+                    if (".exe" not in path and ".dll" not in path):
+                        # Cleanup Registry Key Path
+                        dir_count = len(re.findall(r"\\", path))
+                        path = path.split("\\")
+                        clean_path = ""
+
+                        for j in range(0, dir_count):
+                            if j == (dir_count - 1):
+                                clean_path += path[j]
+                            elif j == 0:
+                                clean_path += path[j] + ":\\"
+                            else:
+                                clean_path += path[j] + "\\"
+                    else:
+                        # Send the .DLL/.EXE to be analyzed.
+                        clean_path = path
+                        # Avoid issues with rundll32.exe
+                        if ("rundll32.exe c:" in path):
+                          clean_path = clean_path.split("rundll32.exe ")[1]
+
+                        # Avoid Issues with CLI arguments:
+                        if (".exe -" in clean_path):
+                            clean_path = clean_path.split(" -")[0]
+                            
+                        base_path = os.path.dirname(clean_path)
+
+                    # Make sure this is not a duplicate key before saving
+                    if clean_path not in previous_paths:
+                        # Save key to cleaned keys
+                        keyOutFile.write(clean_path + "\n")
+                        previous_paths.add(clean_path)
+
+                    if ((".exe" in clean_path.lower() or ".dll" in clean_path.lower()) and base_path not in previous_paths):
+                        keyOutFile.write(base_path + "\n")
+                        previous_paths.add(base_path)
+
+                    pbar.update(1)
+
+                else:
+                    pbar.update(1)
+
+            pbar.close()
+            keyOutFile.close()
+
+        except Exception as e:
+            self.__print_exception()
+
+    # ===============================================#
+    # Purpose: Thread the win32api DACL lookups     #
+    # Return: None                                  #
+    # ===============================================#
+    ## build_command_list --> __thread_commands --> __get_acl_list --> __write_acl
+    def build_command_list(self, total_threads):
+        try:
+            total_number_of_paths = sum(
+                1 for line in open(f"{self.__output_dir}/cleaned_paths.txt")
+            )
+            commands = [None] * total_threads
+            commands_index = 0
+            total_commands_sent = 0
+
+            pbar = tqdm(total=total_number_of_paths)
+            pbar.set_description("Analyzing ACL's")
+
+            with open(f"{self.__output_dir}/cleaned_paths.txt", "r") as f:
+                for path in f:  # For each object in cleaned keys
+
+                    pbar.update(1)
+                    cmd = path.strip()
+
+                    # if the index is less than the requested threads, keep adding commands to the list
+                    if commands_index < total_threads:
+                        commands[commands_index] = cmd
+                        commands_index += 1
+                        total_commands_sent += 1
+
+                    # If commands list is full, send it off for analysis and reset
+                    if commands_index == total_threads:
+                        self.__thread_commands(commands)  # Send the data
+                        commands = [None] * total_threads  # Reset list and counter
+                        commands_index = 0
+                        commands[
+                            commands_index
+                        ] = cmd  # Add current path to [0] place in list
+                        commands_index += 1
+                        total_commands_sent += 1
+
+            # Send the last set of commands:
+            self.__thread_commands(commands)
+            pbar.close()
+            return total_number_of_paths
+
+        except Exception as e:
+            self.__print_exception()
+
+    # ===============================================#
+    # Purpose: Thread the win32api DACL lookups     #
+    # Return: None                                  #
+    # ===============================================#
+    def __thread_commands(self, commands):
+        try:
+            threads = []
+            tot_commands = len(commands)
+
+            for i in range(tot_commands):
+
+                # Analyze registry keys
+                if "hklm:" in str(commands[i]).lower():
+                    t = threading.Thread(
+                        target=self.__reg_enum.get_acl_list, args=(commands[i],)
+                    )
+                    t.daemon = True
+                    t.start()
+                    threads.append(t)
+                    t.join()
+                # Disregard NONE type objects
+                elif commands[i] == None:
+                    pass
+                # Analyze File Paths
+                else:
+                    t = threading.Thread(
+                        target=self.__file_enum.get_acl_list, args=(commands[i],)
+                    )
+                    t.daemon = True
+                    t.start()
+                    threads.append(t)
+                    t.join()
+
+        except Exception as e:
+            self.__print_exception()
+
+    # ===============================================#
+    # Purpose:Check for suspect permission sets     #
+    # Return: Boolean                               #
+    #   - True: Found suspect Permission            #
+    #   - False: benign                             #
+    # ===============================================#
+    def __check_permission(self, line):
+        try:
+            tmp = False
+            users = ["users", "everyone", "interactive", "authenticated"]
+            permissions = [
+                "fullcontrol",
+                "write",
+                "changepermissions",
+                "takeownership",
+                "traverse",
+                "key_write",
+                "generic_write",
+                "key_all_access",
+                "file_all_access",
+                "file_generic_write",
+                "generic_all",
+                "ds_write_prop",
+            ]
+
+            for user in users:
+                for permission in permissions:
+                    if user in line.lower() and permission in line.lower():
+                        tmp = True
+                        break
+
+                if tmp:
+                    break
+
+            return tmp
+
+        except Exception as e:
+            self.__print_exception()
+
+    # ===============================================#
+    # Purpose: analyzes the filepaths or registry   #
+    # class looking for abusable permissions        #
+    #                                               #
+    # Return: int - # of suspect permissions        #
+    # ===============================================#
+    def analyze_acls(self):
+        try:
+            df = pd.DataFrame(columns=["key", "access"])
+            num_lines = sum(1 for line in open(f"{self.__output_dir}/raw_acls.txt"))
+
+            with open(f"{self.__output_dir}/raw_acls.txt", "r") as f:
+
+                permission_index = 0  # Index of determining number of permissions between Access and Audit
+                total_index = 0  # Index of all frames we have built
+                fun_index = 0  # Index of Full_Control Registry Keys
+                key = None  # Placeholder for key
+                access = ""  # Placeholder for access control list
+                add = False  # Placeholder to determine if user has full permissions
+
+                pbar = tqdm(total=num_lines)
+                pbar.set_description("Looking for Evil")
+
+                for line in f:
+                    try:
+                        # Determine Path
+                        if "path" in line.lower():
+                            key = str(line.split(": ")[1]).strip()
+
+                        # Determine Access
+                        if (
+                            permission_index >= 1
+                            and "--------end--------" not in line.lower()
+                        ):
+                            access += "\n" + str(line).strip()
+                            permission_index += 1
+                            user_full_control = self.__check_permission(line)
+                            if user_full_control:
+                                add = True
+
+                        if (
+                            "access:" in line.lower()
+                        ):  # Check if we are at the ACCESS portion:
+                            access += line.split("ACCESS:")[1].strip()
+                            permission_index += 1  # Denote which permission we are at
+                            user_full_control = self.__check_permission(line)
+                            if user_full_control:
+                                add = True
+
+                        if "--------end--------" in line.lower():
+
+                            if add:
+                                df = df.append(
+                                    {"key": key, "access": access}, ignore_index=True
+                                )
+                                fun_index += 1
+
+                            path = None
+                            owner = None
+                            group = None
+                            add = False
+                            permission_index = 0
+                            total_index += 1
+                            access = ""
+
+                        pbar.update(1)
+
+                    except Exception as e:
+                        pbar.update(1)
+                        pass
+
+                pbar.close()
+
+            df.to_excel(self.__final_report)
+            return fun_index
+
+        except Exception as e:
+            self.__print_exception()
+
+    # ===============================================#
+    # Purpose: Given a file of DACLs, this function #
+    # analyzes the filepaths or registry class      #
+    # looking for abusable permissions              #
+    #                                               #
+    # Return: int - # of suspect permissions        #
+    # ===============================================#
+    def analyze_acls_from_file(self, file):
+        try:
+            df = pd.DataFrame(columns=["key", "access"])
+            num_lines = sum(1 for line in open(file))
+
+            with open(file, "r") as f:
+
+                permission_index = 0  # Index of determining number of permissions between Access and Audit
+                total_index = 0  # Index of all frames we have built
+                fun_index = 0  # Index of Full_Control Registry Keys
+                key = None  # Placeholder for key
+                owner = None  # Placeholder for owner
+                group = None  # Placeholder for group
+                access = ""  # Placeholder for access control list
+                add = False  # Placeholder to determine if user has full permissions
+
+                pbar = tqdm(total=num_lines)
+                pbar.set_description("Looking for Evil")
+
+                for line in f:
+                    try:
+                        # Determine Path
+                        if "path" in line.lower():
+                            key = str(line.split(": ")[1]).strip()
+
+                        # Determine Access
+                        if (
+                            permission_index >= 1
+                            and "--------end--------" not in line.lower()
+                        ):
+                            access += "\n" + str(line).strip()
+                            permission_index += 1
+                            user_full_control = self.__check_permission(line)
+                            if user_full_control:
+                                add = True
+
+                        if (
+                            "access:" in line.lower()
+                        ):  # Check if we are at the ACCESS portion:
+                            access += line.split("ACCESS:")[1].strip()
+                            permission_index += 1  # Denote which permission we are at
+                            user_full_control = self.__check_permission(line)
+                            if user_full_control:
+                                add = True
+
+                        if "--------end--------" in line.lower():
+
+                            if add:
+                                df = df.append(
+                                    {"key": key, "access": access}, ignore_index=True
+                                )
+                                fun_index += 1
+
+                            path = None
+                            owner = None
+                            group = None
+                            add = False
+                            permission_index = 0
+                            total_index += 1
+                            access = ""
+
+                        pbar.update(1)
+
+                    except Exception as e:
+                        pass
+                        pbar.update(1)
+                pbar.close()
+
+            df.to_excel(self.__final_report)
+            return fun_index
+
+        except Exception as e:
+            self.__print_exception()
+
+    # ===============================================#
+    # Purpose: Clean Exception Printing              #
+    # Return: None                                   #
+    # ===============================================#
+    def __print_exception(self):
+        exc_type, exc_obj, tb = sys.exc_info()
+        tmp_file = tb.tb_frame
+        lineno = tb.tb_lineno
+        filename = tmp_file.f_code.co_filename
+        linecache.checkcache(filename)
+        line = linecache.getline(filename, lineno, tmp_file.f_globals)
+        print(f"{Fore.RED}EXCEPTION IN: {Fore.GREEN}{filename}\n\t[i] LINE: {lineno}, {line.strip()}\n\t[i] OBJECT: {exc_obj}{Fore.RESET}")
+
+    # ===============================================#
+    # Purpose: return Total amount of errors seen    #
+    # Return: int                                    #
+    # ===============================================#
+    def get_error_count(self):
+      try:
+        file_errors = self.__file_enum.error_index
+        reg_errors = self.__reg_enum.error_index
+        return (file_errors + reg_errors)
+      except:
+        self.__print_exception()
