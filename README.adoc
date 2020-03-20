@@ -4,34 +4,53 @@ v1.0.0
 :toc:
 
 == Concept
-I needed a simple way to enumerate permissions on certian registry keys. Specfically, this script takes in a CSV file that was a product of a `Procmon.exe` analysis. Sample configurations for this analysis can be found in the `config` directory. 
+Generate a Procmon.exe dump in CSV format that contains all .dll, .exe, and HKLM registry keys that were generated or access by either a High or System integrity context. `Configuration locataion: config/`.
+
+With this CSV, I needed to enumerate the DACLs of each object in a clean and effecient manner. This is what this repository does using `win32api`. 
+
 
 [code, raw]
 ----
-+---------------+      +----------------+
-|               |      |  Report on     |
-|   Search.py   |      |  FullControl   |
-|               |      |  Access        |
-+-------+-------+      +-------+--------+
-        |                      |
-        |                      |
-        |                      |
-+-------+-------+      +-------+--------+
-|Procmon CSV    |      | Pull ACL's for |
-|output Cleanup +----->+ All HKLM Keys  |
-+---------------+      +----------------+
++---------------------------------------------------------------+
+| python3 search.py -p <procmon_data.csv> -o <output_dir> -t 23 |
++---------------------------+-----------------------------------+
+                            |
+        +-------------------v---------------------+       +--------------------------------+
+        |Parse Procmon: analyze.parse_procmon_csv |       |   filepaths.get_acl_list()     |
+        |Output:        cleaned_paths.txt         |   +--->              or                |
+        +-------------------+---------------------+   |   |    registry.get_acl_list()     |
+                            |                         |   +---------------+----------------+
+        +-------------------v---------------------+   |                   |
+        | Analyze Paths/Keys in cleaned_paths.txt |   |   +---------------v----------------+
+        +-------------------+---------------------+   |   |  filepaths.__write_to_file()   |
+                            |                         |   |              or                |
+        +-------------------v---------------------+   |   |   registry.__write_to_file()   |
+        |       analyze.build_command_list()      |   |   |                                |
+        +-------------------+---------------------+   |   |Output:  raw_acls.txt           |
+                            |                         |   +----------------+---------------+
+        +-------------------v---------------------+   |                    |
+        |       analyze.__thread_commands()       +---+                    |
+        +-----------------------------------------+                        |
+                                                                           |
+        +-----------------------------------------+                        |
+        |         analyze.analyze_acls()          +<-----------------------+
+        |Output: evil.xlsx                        |
+        +-----------------------------------------+
+
 ----
 
 == Usage
 
 [code, raw]
 ----
-usage: search.py [-h] -p  -o
+usage: search.py [-h] [-p  | -a ] [-t] -o
 
 optional arguments:
   -h, --help       show this help message and exit
-  -p , --procmon   Path to the Procmon Output File (CSV)
-  -o , --out       Output location for results.
+  -p, --procmon    Path to the Procmon Output File (CSV)
+  -a, --acl        Analyze a singular acls.txt file
+  -t, --threads    Defined number of threads (Max 100). Default=10
+  -o, --out        Output location for results.
 ----
 
 * Example:
