@@ -54,9 +54,9 @@ class analyze:
                 "regquerykey",
             ]  # Operations we don't care about
 
-            keyOutFile = open(
-                f"{self.__output_dir}/cleaned_paths.txt", "w"
-            )  # Save the cleanup output to a file.
+            cleaned_data_file = open(f"{self.__output_dir}/cleaned_paths.csv", "w")  # Save the cleanup output to a file.
+            cleaned_data_file.write("Process Name,Original Path,Clean Path,Operation,Integrity\n")
+
             # DataFrame Objects
             data = pd.read_csv(p_file)
             headers = list(data)
@@ -67,20 +67,22 @@ class analyze:
             previous_paths = (set())  
 
             for i in range(0, dataframe_length):
+
                 # Pull in dataframe content we're interested in.
-                path = str(data["Path"][i]).lower()
+                orig_path = str(data["Path"][i]).lower()
                 proc_name = str(data["Process Name"][i]).lower()
                 operation = str(data["Operation"][i]).lower()
+                integrity = str(data["Integrity"][i]).lower()
 
                 if (
                     proc_name not in bad_process_names
                     and operation not in bad_operation_names
                 ):
 
-                    if (".exe" not in path and ".dll" not in path):
+                    if (".exe" not in orig_path and ".dll" not in orig_path):
                         # Cleanup Registry Key Path
-                        dir_count = len(re.findall(r"\\", path))
-                        path = path.split("\\")
+                        dir_count = len(re.findall(r"\\", orig_path))
+                        path = orig_path.split("\\")
                         clean_path = ""
 
                         for j in range(0, dir_count):
@@ -92,7 +94,7 @@ class analyze:
                                 clean_path += path[j] + "\\"
                     else:
                         # Send the .DLL/.EXE to be analyzed.
-                        clean_path = path
+                        clean_path = orig_path
                         # Avoid issues with rundll32.exe
                         if ("rundll32.exe c:" in path):
                           clean_path = clean_path.split("rundll32.exe ")[1]
@@ -106,11 +108,13 @@ class analyze:
                     # Make sure this is not a duplicate key before saving
                     if clean_path not in previous_paths:
                         # Save key to cleaned keys
-                        keyOutFile.write(clean_path + "\n")
+                        final_data = f"\"{proc_name}\",\"{orig_path}\",\"{clean_path}\",\"{operation}\",\"{integrity}\""
+                        cleaned_data_file.write(final_data + "\n")
                         previous_paths.add(clean_path)
 
                     if ((".exe" in clean_path.lower() or ".dll" in clean_path.lower()) and base_path not in previous_paths):
-                        keyOutFile.write(base_path + "\n")
+                        final_data = f"\"{proc_name}\",\"{orig_path}\",\"{base_path}\",\"{operation}\",\"{integrity}\""
+                        cleaned_data_file.write(final_data + "\n")
                         previous_paths.add(base_path)
 
                     pbar.update(1)
@@ -119,7 +123,7 @@ class analyze:
                     pbar.update(1)
 
             pbar.close()
-            keyOutFile.close()
+            cleaned_data_file.close()
 
         except Exception as e:
             self.__print_exception()
@@ -131,9 +135,11 @@ class analyze:
     ## build_command_list --> __thread_commands --> __get_acl_list --> __write_acl
     def build_command_list(self, total_threads):
         try:
-            total_number_of_paths = sum(
-                1 for line in open(f"{self.__output_dir}/cleaned_paths.txt")
-            )
+             # DataFrame Objects
+            data = pd.read_csv(f"{self.__output_dir}/cleaned_paths.csv", encoding = "ISO-8859-1")
+            headers = list(data)
+            total_number_of_paths = data.shape[0]
+
             commands = [None] * total_threads
             commands_index = 0
             total_commands_sent = 0
@@ -141,28 +147,40 @@ class analyze:
             pbar = tqdm(total=total_number_of_paths)
             pbar.set_description("Analyzing ACL's")
 
-            with open(f"{self.__output_dir}/cleaned_paths.txt", "r") as f:
-                for path in f:  # For each object in cleaned keys
+            for i in range(0, total_number_of_paths):
+                
+                #cleaned_data_file.write("Process Name,Original Path,Clean Path,Operation,Integrity")
+                proc_name = str(data["Process Name"][i]).lower()
+                orig_cmd = str(data["Original Path"][i]).lower()
+                clean_cmd = str(data["Clean Path"][i]).lower()
+                operation = str(data["Operation"][i]).lower()
+                integrity = str(data["Integrity"][i]).lower()
 
-                    pbar.update(1)
-                    cmd = path.strip()
+                # Generate a Dictionary that will be stored in a list (I know, it's messy...)
+                cmd = {
+                    "proc_name" : proc_name, 
+                    "orig_cmd"  : orig_cmd, 
+                    "clean_cmd" : clean_cmd,
+                    "operation" : operation,
+                    "integrity" : integrity
+                    }
 
-                    # if the index is less than the requested threads, keep adding commands to the list
-                    if commands_index < total_threads:
-                        commands[commands_index] = cmd
-                        commands_index += 1
-                        total_commands_sent += 1
+                # if the index is less than the requested threads, keep adding commands to the list
+                if commands_index < total_threads:
+                    commands[commands_index] = cmd
+                    commands_index += 1
+                    total_commands_sent += 1
 
-                    # If commands list is full, send it off for analysis and reset
-                    if commands_index == total_threads:
-                        self.__thread_commands(commands)  # Send the data
-                        commands = [None] * total_threads  # Reset list and counter
-                        commands_index = 0
-                        commands[
-                            commands_index
-                        ] = cmd  # Add current path to [0] place in list
-                        commands_index += 1
-                        total_commands_sent += 1
+                # If commands list is full, send it off for analysis and reset
+                if commands_index == total_threads:
+                    self.__thread_commands(commands)  # Send the data
+                    commands = [None] * total_threads  # Reset list and counter
+                    commands_index = 0
+                    commands[commands_index] = cmd  # Add current path to [0] place in list
+                    commands_index += 1
+                    total_commands_sent += 1
+
+                pbar.update(1)
 
             # Send the last set of commands:
             self.__thread_commands(commands)
@@ -255,7 +273,7 @@ class analyze:
     # ===============================================#
     def analyze_acls(self):
         try:
-            df = pd.DataFrame(columns=["key", "access"])
+            df = pd.DataFrame(columns=["Process_Name", "Integrity", "Operation", "Accessed Object", "ACLs"])
             num_lines = sum(1 for line in open(f"{self.__output_dir}/raw_acls.txt"))
 
             with open(f"{self.__output_dir}/raw_acls.txt", "r") as f:
@@ -263,9 +281,14 @@ class analyze:
                 permission_index = 0  # Index of determining number of permissions between Access and Audit
                 total_index = 0  # Index of all frames we have built
                 fun_index = 0  # Index of Full_Control Registry Keys
-                key = None  # Placeholder for key
-                access = ""  # Placeholder for access control list
                 add = False  # Placeholder to determine if user has full permissions
+
+                proc_name = ""      # Placeholder for process name
+                integrity = ""      # Placeholder for process integrity
+                operation = ""      # Placeholder for operation type
+                orig_cmd = ""       # Placeholder for original command/path
+                clean_cmd = ""      # Placeholder for cleaned command/path
+                access = ""         # Placeholder for access control list
 
                 pbar = tqdm(total=num_lines)
                 pbar.set_description("Looking for Evil")
@@ -274,10 +297,21 @@ class analyze:
                     line = line.lower()
                     try:
 
-                        # Determine Path
-                        if "path" in line:
-                            key = str(line.split(": ")[1]).strip()
+                        if "process_name" in line:
+                            proc_name = str(line.split(": ")[1]).strip()
 
+                        if "integrity" in line:
+                            integrity = str(line.split(": ")[1]).strip()
+
+                        if "operation" in line:
+                            operation = str(line.split(": ")[1]).strip()
+
+                        if "original_cmd" in line:
+                            orig_cmd = str(line.split(": ")[1]).strip()
+                        
+                        if "path" in line:
+                            clean_cmd = str(line.split(": ")[1]).strip()
+                        
                         # Determine Access
                         if (
                             permission_index >= 1
@@ -301,9 +335,14 @@ class analyze:
                         if "--------end--------" in line:
 
                             if add:
-                                df = df.append(
-                                    {"key": key, "access": access}, ignore_index=True
-                                )
+                                final_data = {
+                                    "Process_Name": proc_name, 
+                                    "Integrity": integrity,
+                                    "Operation": operation,
+                                    "Accessed Object": clean_cmd,
+                                    "ACLs": access
+                                    }
+                                df = df.append(final_data, ignore_index=True)
                                 fun_index += 1
 
                             path = None
@@ -337,7 +376,7 @@ class analyze:
     # ===============================================#
     def analyze_acls_from_file(self, file):
         try:
-            df = pd.DataFrame(columns=["key", "access"])
+            df = pd.DataFrame(columns=["Process_Name", "Integrity", "Operation", "Accessed Object", "ACLs"])
             num_lines = sum(1 for line in open(file))
 
             with open(file, "r") as f:
@@ -345,11 +384,14 @@ class analyze:
                 permission_index = 0  # Index of determining number of permissions between Access and Audit
                 total_index = 0  # Index of all frames we have built
                 fun_index = 0  # Index of Full_Control Registry Keys
-                key = None  # Placeholder for key
-                owner = None  # Placeholder for owner
-                group = None  # Placeholder for group
-                access = ""  # Placeholder for access control list
                 add = False  # Placeholder to determine if user has full permissions
+
+                proc_name = ""      # Placeholder for process name
+                integrity = ""      # Placeholder for process integrity
+                operation = ""      # Placeholder for operation type
+                orig_cmd = ""       # Placeholder for original command/path
+                clean_cmd = ""      # Placeholder for cleaned command/path
+                access = ""         # Placeholder for access control list
 
                 pbar = tqdm(total=num_lines)
                 pbar.set_description("Looking for Evil")
@@ -357,10 +399,21 @@ class analyze:
                 for line in f:
                     line = line.lower()
                     try:
- 
-                        # Determine Path
+
+                        if "process_name" in line:
+                            proc_name = str(line.split(": ")[1]).strip()
+
+                        if "integrity" in line:
+                            integrity = str(line.split(": ")[1]).strip()
+
+                        if "operation" in line:
+                            operation = str(line.split(": ")[1]).strip()
+
+                        if "original_cmd" in line:
+                            orig_cmd = str(line.split(": ")[1]).strip()
+                        
                         if "path" in line:
-                            key = str(line.split(": ")[1]).strip()
+                            clean_cmd = str(line.split(": ")[1]).strip()
 
                         # Determine Access
                         if (
@@ -385,9 +438,14 @@ class analyze:
                         if "--------end--------" in line:
 
                             if add:
-                                df = df.append(
-                                    {"key": key, "access": access}, ignore_index=True
-                                )
+                                final_data = {
+                                    "Process_Name": proc_name, 
+                                    "Integrity": integrity,
+                                    "Operation": operation,
+                                    "Accessed Object": clean_cmd,
+                                    "ACLs": access
+                                    }
+                                df = df.append(final_data, ignore_index=True)
                                 fun_index += 1
 
                             path = None

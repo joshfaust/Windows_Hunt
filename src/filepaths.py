@@ -40,8 +40,23 @@ class filepath_enumeration:
     # or filepath.                                  #
     # Return: None                                  #
     # ===============================================#
-    def get_acl_list(self, f_path):
+    def get_acl_list(self, path_dict):
         try:
+
+            '''
+            cmd = {
+                "proc_name" : proc_name, 
+                "orig_cmd"  : orig_cmd, 
+                "clean_cmd" : clean_cmd,
+                "operation" : operation,
+                "integrity" : integrity
+                }
+            '''
+
+            path_dict = dict(path_dict)
+            f_path = path_dict["clean_cmd"]
+
+
             # Working with weird WIndows/Procmon Output...
             if "|" in f_path:
                 f_path = f_path.split("|")[0]
@@ -52,7 +67,7 @@ class filepath_enumeration:
             elif ("hklm" in f_path and "C:" in f_path):
                 f_path = "C:/" + f_path.split("C:")[1]
 
-            acls = "Access: "
+            acls = ""
             gfso = win32security.GetFileSecurity(
                 f_path, win32security.DACL_SECURITY_INFORMATION
             )
@@ -88,7 +103,14 @@ class filepath_enumeration:
                         ascii_mask = enum_obj.name
                         acls += f"{domain}\\{name} {access} {ascii_mask}\n"
 
-            data = f"\nPath: {f_path}\n{acls}\n"
+            data = f"""
+Process_Name: {path_dict["proc_name"]}
+Integrity: {path_dict["integrity"]}
+Operation: {path_dict["operation"]}
+Original_Cmd: {path_dict["orig_cmd"]}
+Path: {f_path}
+Access: {acls}
+            """
             self.__write_acl(data)
             f_path = ""
 

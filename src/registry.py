@@ -55,8 +55,21 @@ class registry_enumeration:
     # Registry path / key                           #
     # Return: None                                  #
     # ===============================================#
-    def get_acl_list(self, r_path):
+    def get_acl_list(self, path_dict):
         try:
+            
+            '''
+            cmd = {
+                "proc_name" : proc_name, 
+                "orig_cmd"  : orig_cmd, 
+                "clean_cmd" : clean_cmd,
+                "operation" : operation,
+                "integrity" : integrity
+                }
+            '''
+
+            path_dict = dict(path_dict)
+            r_path = path_dict["clean_cmd"]
 
             try:
                 path = r_path.split(":\\")[1]
@@ -87,11 +100,19 @@ class registry_enumeration:
             all_permissions = dict(self.sddl_dacl_parse(sddl_string))
 
             keys = all_permissions.keys()
-            final = ""
+            acls = ""
             for key in keys:
-                final += f"{key}: {all_permissions[key]}\n"
+                acls += f"{key}: {all_permissions[key]}\n"
+            
+            data = f"""
+Process_Name: {path_dict["proc_name"]}
+Integrity: {path_dict["integrity"]}
+Operation: {path_dict["operation"]}
+Original_Cmd: {path_dict["orig_cmd"]}
+Path: {r_path}
+Access: {acls}
+            """
 
-            data = f"\nPath: {r_path}\nACCESS: {final}\n"
             self.__write_acl(data)
 
         except Exception as e:
