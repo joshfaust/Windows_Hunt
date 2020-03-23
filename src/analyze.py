@@ -8,6 +8,7 @@ import linecache
 import pandas as pd
 from . import filepaths
 from . import registry
+from . import windows_objects
 from tqdm import tqdm
 from colorama import Fore, init
 
@@ -200,16 +201,17 @@ class analyze:
     ## build_command_list --> __thread_commands --> __get_acl_list --> __write_acl
     def build_command_list_path(self, total_threads, path):
         try:
-            tmp = open(f"{self.__output_dir}/paths.txt")
+
             file_paths = []
-            for root, dirs, files in os.walk(path):
-                for file in files:
-                    full_path = os.path.join(root, file)
-                    file_paths.append(full_path)
-                    tmp.write(full_path)
             
-            tmp.close()
-            
+            # We need to disable the file system redirects before enumerating any 
+            # privileged paths such as C:\Windows\System32. 
+            with windows_objects.disable_file_system_redirection():
+                for root, dirs, files in os.walk(path):
+                    for file in files:
+                        full_path = os.path.join(root, file)
+                        file_paths.append(full_path)
+
             total_number_of_paths = len(file_paths)
             commands = [None] * total_threads
             commands_index = 0
