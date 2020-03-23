@@ -153,44 +153,45 @@ Access: {acls}
     def get_acl_list_path(self, f_path):
 
         try:
-            acls = "Access: "
-            gfso = win32security.GetFileSecurity(
-                f_path, win32security.DACL_SECURITY_INFORMATION
-            )
-            dacl = gfso.GetSecurityDescriptorDacl()
+            with windows_objects.disable_file_system_redirection():
+                acls = "Access: "
+                gfso = win32security.GetFileSecurity(
+                    f_path, win32security.DACL_SECURITY_INFORMATION
+                )
+                dacl = gfso.GetSecurityDescriptorDacl()
 
-            for n_ace in range(dacl.GetAceCount()):
-                ace = dacl.GetAce(n_ace)
-                (ace_type, ace_flags) = ace[0]
+                for n_ace in range(dacl.GetAceCount()):
+                    ace = dacl.GetAce(n_ace)
+                    (ace_type, ace_flags) = ace[0]
 
-                mask = 0  # Reset the bitmask for each interation
-                domain = ""  # Reset the domain for each interation
-                name = ""  # Reset the name for each interation
-                ascii_mask = ""  # Reset the ascii permission value for each interation
+                    mask = 0  # Reset the bitmask for each interation
+                    domain = ""  # Reset the domain for each interation
+                    name = ""  # Reset the name for each interation
+                    ascii_mask = ""  # Reset the ascii permission value for each interation
 
-                if ace_type in self.__CONVENTIONAL_ACES:
-                    mask, sid = ace[1:]
-                else:
-                    mask, object_type, inherited_object_type, sid = ace[1:]
+                    if ace_type in self.__CONVENTIONAL_ACES:
+                        mask, sid = ace[1:]
+                    else:
+                        mask, object_type, inherited_object_type, sid = ace[1:]
 
-                name, domain, type = win32security.LookupAccountSid(None, sid)
+                    name, domain, type = win32security.LookupAccountSid(None, sid)
 
-                # Enumerate windows_security_enums
-                for enum_obj in windows_objects.windows_security_enums:
-                    if ctypes.c_uint32(mask).value == enum_obj.value.value:
-                        access = self.__CONVENTIONAL_ACES.get(ace_type, "OTHER")
-                        ascii_mask = enum_obj.name
-                        acls += f"{domain}\\{name} {access} {ascii_mask}\n"
+                    # Enumerate windows_security_enums
+                    for enum_obj in windows_objects.windows_security_enums:
+                        if ctypes.c_uint32(mask).value == enum_obj.value.value:
+                            access = self.__CONVENTIONAL_ACES.get(ace_type, "OTHER")
+                            ascii_mask = enum_obj.name
+                            acls += f"{domain}\\{name} {access} {ascii_mask}\n"
 
-                # Enumerate nt_security_permissions
-                for enum_obj in windows_objects.nt_security_enums:
-                    if ctypes.c_uint32(mask).value == enum_obj.value.value:
-                        access = self.__CONVENTIONAL_ACES.get(ace_type, "OTHER")
-                        ascii_mask = enum_obj.name
-                        acls += f"{domain}\\{name} {access} {ascii_mask}\n"
+                    # Enumerate nt_security_permissions
+                    for enum_obj in windows_objects.nt_security_enums:
+                        if ctypes.c_uint32(mask).value == enum_obj.value.value:
+                            access = self.__CONVENTIONAL_ACES.get(ace_type, "OTHER")
+                            ascii_mask = enum_obj.name
+                            acls += f"{domain}\\{name} {access} {ascii_mask}\n"
 
-            data = f"\nPath: {f_path}\n{acls}\n"
-            self.__write_acl(data)
+                data = f"\nPath: {f_path}\n{acls}\n"
+                self.__write_acl(data)
 
         except Exception as e:
             error = str(e).lower()
