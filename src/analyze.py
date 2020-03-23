@@ -200,12 +200,15 @@ class analyze:
     ## build_command_list --> __thread_commands --> __get_acl_list --> __write_acl
     def build_command_list_path(self, total_threads, path):
         try:
-            
+            tmp = open(f"{self.__output_dir}/paths.txt")
             file_paths = []
             for root, dirs, files in os.walk(path):
                 for file in files:
                     full_path = os.path.join(root, file)
                     file_paths.append(full_path)
+                    tmp.write(full_path)
+            
+            tmp.close()
             
             total_number_of_paths = len(file_paths)
             commands = [None] * total_threads
