@@ -65,6 +65,7 @@ class analyze:
             pbar = tqdm(total=dataframe_length)
             pbar.set_description("Analyzing Procmon Data")
             previous_paths = (set())  
+            path = ""
 
             for i in range(0, dataframe_length):
 
