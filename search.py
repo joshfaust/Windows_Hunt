@@ -126,7 +126,7 @@ if __name__ == "__main__":
                     exit(1)
 
             # Start the Enumeration.
-            #a.parse_procmon_csv(args.p)  # Analyze the Procmon CSV File and pull out paths
+            a.parse_procmon_csv(args.p)  # Analyze the Procmon CSV File and pull out paths
             total_analyzed = a.build_command_list(args.threads)  # Send paths to aggregateCommands with totla Thread Count
             interesting_items = a.analyze_acls()  # Analyze all the ACLs in raw_acls.txt
             
