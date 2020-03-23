@@ -5,7 +5,6 @@ import argparse
 import linecache
 from src import analyze
 from colorama import Fore, init
-
 init()
 
 # ---------------------------------------------------#
@@ -69,7 +68,7 @@ def print_exception():
 # =======================================#
 if __name__ == "__main__":
     try:
-        
+
         parser = argparse.ArgumentParser()
         me = parser.add_mutually_exclusive_group()
         me.add_argument(
@@ -89,6 +88,15 @@ if __name__ == "__main__":
             metavar="",
             required=False,
             help="Analyze a singular acls.txt file",
+        )
+        me.add_argument(
+            "-f",
+            "--files",
+            dest="analysis_path",
+            default=None,
+            metavar='',
+            required=False,
+            help="Analyze all files (Recursive) within a given path"
         )
         parser.add_argument(
             "-t",
@@ -127,34 +135,38 @@ if __name__ == "__main__":
 
             # Start the Enumeration.
             a.parse_procmon_csv(args.p)  # Analyze the Procmon CSV File and pull out paths
-            total_analyzed = a.build_command_list(args.threads)  # Send paths to aggregateCommands with totla Thread Count
+            total_analyzed = a.build_command_list_procmon(args.threads)  # Send paths to aggregateCommands with totla Thread Count
             interesting_items = a.analyze_acls()  # Analyze all the ACLs in raw_acls.txt
             
-
             print("-" * 125)
             print(f"\n[i] A total of {total_analyzed} objects Were Analyzed.")
-            print(f"[i] {interesting_items} Were found to be improperly configured.")
-            print(f"[i] {a.get_error_count()} ERRORS occured during the analysis.")
+            print(f"[i] {interesting_items} Were found to have Write or FullContol Permissions.")
+            print(f"[i] {a.get_error_count()} ERRORS occurred during the analysis.")
             print("[i] Output Files:")
-            print(f"\t+ {args.o}acls.txt:\t\tRaw output of Access Control Listings")
-            print(
-                f"\t+ {args.o}cleaned_paths.txt:\tClean verions (no duplicates) or the Procmon Output"
-            )
-            print(
-                f"\t+ {args.o}data.xlsx:\t\tKeys denoted as improperly configured/interesting"
-            )
-            print(
-                f"\t+ {args.o}errors.txt:\t\tDetails of all errors observed"
-            )
+            print(f"\t+ {args.o}raw_acls.txt:\t\tRaw output of Access Control Listings")
+            print(f"\t+ {args.o}cleaned_paths.txt:\tCleaned Up procmon output (de-duplication)")
+            print(f"\t+ {args.o}evil.xlsx:\t\tKeys denoted as improperly configured/interesting")
+            print(f"\t+ {args.o}errors.txt:\t\tDetails of all errors observed")
 
         if args.acl != None:
             interesting_items = a.analyze_acls_from_file(args.acl)
             print("-" * 125)
-            print(f"[i] {interesting_items} Were found to be improperly configured.")
+            print(f"[i] {interesting_items} Were found to have Write or FullContol Permissions.")
             print("[i] Output Files:")
-            print(
-                f"\t+ {args.o}data.xlsx:\t\tKeys denoted as improperly configured/interesting"
-            )
+            print(f"\t+ {args.o}data.xlsx:\t\tKeys denoted as improperly configured/interesting")
+
+        if (args.analysis_path != None):
+            total_analyzed = a.build_command_list_path(args.threads, args.analysis_path)
+            interesting_items = a.analyze_acls()
+
+            print("-" * 125)
+            print(f"\n[i] A total of {total_analyzed} objects Were Analyzed.")
+            print(f"[i] {interesting_items} Were found to have Write or FullContol Permissions.")
+            print(f"[i] {a.get_error_count()} ERRORS occurred during the analysis.")
+            print("[i] Output Files:")
+            print(f"\t+ {args.o}raw_acls.txt:\t\tRaw output of Access Control Listings")
+            print(f"\t+ {args.o}evil.xlsx:\t\tKeys denoted as improperly configured/interesting")
+            print(f"\t+ {args.o}errors.txt:\t\tDetails of all errors observed")
 
         exit(0)
 

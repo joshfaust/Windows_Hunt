@@ -134,7 +134,7 @@ class analyze:
     # Return: None                                  #
     # ===============================================#
     ## build_command_list --> __thread_commands --> __get_acl_list --> __write_acl
-    def build_command_list(self, total_threads):
+    def build_command_list_procmon(self, total_threads):
         try:
              # DataFrame Objects
             data = pd.read_csv(f"{self.__output_dir}/cleaned_paths.csv", encoding = "ISO-8859-1")
@@ -174,7 +174,7 @@ class analyze:
 
                 # If commands list is full, send it off for analysis and reset
                 if commands_index == total_threads:
-                    self.__thread_commands(commands)  # Send the data
+                    self.__thread_commands(commands, "procmon")  # Send the data
                     commands = [None] * total_threads  # Reset list and counter
                     commands_index = 0
                     commands[commands_index] = cmd  # Add current path to [0] place in list
@@ -184,7 +184,60 @@ class analyze:
                 pbar.update(1)
 
             # Send the last set of commands:
-            self.__thread_commands(commands)
+            self.__thread_commands(commands, "procmon")
+            pbar.close()
+            return total_number_of_paths
+
+        except Exception as e:
+            self.__print_exception()
+
+
+
+    # ===============================================#
+    # Purpose: Thread the win32api DACL lookups     #
+    # Return: None                                  #
+    # ===============================================#
+    ## build_command_list --> __thread_commands --> __get_acl_list --> __write_acl
+    def build_command_list_path(self, total_threads, path):
+        try:
+            
+            file_paths = []
+            for root, dirs, files in os.walk(path):
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    file_paths.append(full_path)
+            
+            total_number_of_paths = len(file_paths)
+            commands = [None] * total_threads
+            commands_index = 0
+            total_commands_sent = 0
+
+            pbar = tqdm(total=total_number_of_paths)
+            pbar.set_description("Analyzing ACL's")
+
+            for i, f_path in enumerate(file_paths):
+                
+                cmd = f_path.strip()
+
+                # if the index is less than the requested threads, keep adding commands to the list
+                if commands_index < total_threads:
+                    commands[commands_index] = cmd
+                    commands_index += 1
+                    total_commands_sent += 1
+
+                # If commands list is full, send it off for analysis and reset
+                if commands_index == total_threads:
+                    self.__thread_commands(commands, "path")  # Send the data
+                    commands = [None] * total_threads  # Reset list and counter
+                    commands_index = 0
+                    commands[commands_index] = cmd  # Add current path to [0] place in list
+                    commands_index += 1
+                    total_commands_sent += 1
+
+                pbar.update(1)
+
+            # Send the last set of commands:
+            self.__thread_commands(commands, "path")
             pbar.close()
             return total_number_of_paths
 
@@ -195,34 +248,52 @@ class analyze:
     # Purpose: Thread the win32api DACL lookups     #
     # Return: None                                  #
     # ===============================================#
-    def __thread_commands(self, commands):
+    def __thread_commands(self, commands, analysis_type):
         try:
             threads = []
             tot_commands = len(commands)
 
-            for i in range(tot_commands):
+            if (analysis_type == "procmon"):
+                for i in range(tot_commands):
 
-                # Analyze registry keys
-                if "hklm:" in str(commands[i]).lower():
-                    t = threading.Thread(
-                        target=self.__reg_enum.get_acl_list, args=(commands[i],)
-                    )
-                    t.daemon = True
-                    t.start()
-                    threads.append(t)
-                    t.join()
-                # Disregard NONE type objects
-                elif commands[i] == None:
-                    pass
-                # Analyze File Paths
-                else:
-                    t = threading.Thread(
-                        target=self.__file_enum.get_acl_list, args=(commands[i],)
-                    )
-                    t.daemon = True
-                    t.start()
-                    threads.append(t)
-                    t.join()
+                    # Analyze registry keys
+                    if "hklm:" in str(commands[i]).lower():
+                        t = threading.Thread(
+                            target=self.__reg_enum.get_acl_list_procmon, args=(commands[i],)
+                        )
+                        t.daemon = True
+                        t.start()
+                        threads.append(t)
+                        t.join()
+                    # Disregard NONE type objects
+                    elif commands[i] == None:
+                        pass
+                    # Analyze File Paths
+                    else:
+                        t = threading.Thread(
+                            target=self.__file_enum.get_acl_list_procmon, args=(commands[i],)
+                        )
+                        t.daemon = True
+                        t.start()
+                        threads.append(t)
+                        t.join()
+            
+            if (analysis_type == "path"):
+                for i in range(tot_commands):
+                    
+                    if (commands[i] == None):
+                        pass
+                    else:
+                        t = threading.Thread(
+                            target=self.__file_enum.get_acl_list_path, args=(commands[i],)
+                        )
+                        t.daemon = True
+                        t.start()
+                        threads.append(t)
+
+                        if (i == (tot_commands -1)):
+                            t.join()
+
 
         except Exception as e:
             self.__print_exception()

@@ -55,7 +55,7 @@ class registry_enumeration:
     # Registry path / key                           #
     # Return: None                                  #
     # ===============================================#
-    def get_acl_list(self, path_dict):
+    def get_acl_list_procmon(self, path_dict):
         try:
             
             '''

@@ -1,5 +1,6 @@
 import sys
 import os
+import glob
 import ctypes
 import time
 import threading
@@ -13,12 +14,12 @@ from . import windows_objects
 
 init()
 
-# ---------------------------------------------------#
+# --------------------------------------------------#
 # Name:     File/Filepath Enumeration Class         #
 # Purpose:  Conduct the overall DACL analysis       #
 # Author:   @jfaust0                                #
 # Website:  sevrosecurity.com                       #
-# ---------------------------------------------------#
+# --------------------------------------------------#
 
 
 class filepath_enumeration:
@@ -35,16 +36,17 @@ class filepath_enumeration:
             win32security.ACCESS_DENIED_ACE_TYPE: "DENY",
         }
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Obtains ACL values for a single file #
-    # or filepath.                                  #
+    # or filepath given a dict object that contains #
+    # Procmon.exe attributes/data                   #
     # Return: None                                  #
-    # ===============================================#
-    def get_acl_list(self, path_dict):
+    # ==============================================#
+    def get_acl_list_procmon(self, path_dict):
         try:
 
             '''
-            cmd = {
+            path_dict = {
                 "proc_name" : proc_name, 
                 "orig_cmd"  : orig_cmd, 
                 "clean_cmd" : clean_cmd,
@@ -143,10 +145,87 @@ Access: {acls}
                 self.__print_exception()
                 exit(0)
 
-    # ===============================================#
+    # ==============================================#
+    # Purpose: Obtains ACL values for all files     #
+    # (recursive directory search) given a path     #
+    # Return: None                                  #
+    # ==============================================#
+    def get_acl_list_path(self, f_path):
+
+        try:
+            acls = "Access: "
+            gfso = win32security.GetFileSecurity(
+                f_path, win32security.DACL_SECURITY_INFORMATION
+            )
+            dacl = gfso.GetSecurityDescriptorDacl()
+
+            for n_ace in range(dacl.GetAceCount()):
+                ace = dacl.GetAce(n_ace)
+                (ace_type, ace_flags) = ace[0]
+
+                mask = 0  # Reset the bitmask for each interation
+                domain = ""  # Reset the domain for each interation
+                name = ""  # Reset the name for each interation
+                ascii_mask = ""  # Reset the ascii permission value for each interation
+
+                if ace_type in self.__CONVENTIONAL_ACES:
+                    mask, sid = ace[1:]
+                else:
+                    mask, object_type, inherited_object_type, sid = ace[1:]
+
+                name, domain, type = win32security.LookupAccountSid(None, sid)
+
+                # Enumerate windows_security_enums
+                for enum_obj in windows_objects.windows_security_enums:
+                    if ctypes.c_uint32(mask).value == enum_obj.value.value:
+                        access = self.__CONVENTIONAL_ACES.get(ace_type, "OTHER")
+                        ascii_mask = enum_obj.name
+                        acls += f"{domain}\\{name} {access} {ascii_mask}\n"
+
+                # Enumerate nt_security_permissions
+                for enum_obj in windows_objects.nt_security_enums:
+                    if ctypes.c_uint32(mask).value == enum_obj.value.value:
+                        access = self.__CONVENTIONAL_ACES.get(ace_type, "OTHER")
+                        ascii_mask = enum_obj.name
+                        acls += f"{domain}\\{name} {access} {ascii_mask}\n"
+
+            data = f"\nPath: {f_path}\n{acls}\n"
+            self.__write_acl(data)
+
+        except Exception as e:
+            error = str(e).lower()
+            if (
+                "find the path specified" in error
+                or "find the file specified" in error
+                or "access is denied" in error
+                or "ace type 9" in error
+                or "nonetype" in error
+            ):
+
+                data = f"\nPath: {f_path}\n{str(e)}\n"
+                self.__write_acl(data)
+                pass
+
+            elif "no mapping" in error:
+                note = """Possibly VULNERABLE: No mapping between account names and SID's
+        Account used to set GPO may have been removed
+        Account name may be typed incorrectly
+        INFO: https://www.rebeladmin.com/2016/01/how-to-fix-error-no-mapping-between-account-names-and-security-ids-in-active-directory/"""
+
+                data = f"\nPath: {f_path}\n{note}\n"
+                self.__write_acl(data)
+                pass
+
+            else:
+                self.__write_error(f_path)
+                self.__print_exception()
+                exit(0)
+
+
+    # ==============================================#
     # Purpose: Write to File Function for threads   #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     def __write_acl(self, data):
         try:
             # wait until the file is unlocked.
@@ -182,10 +261,10 @@ Access: {acls}
             exit(1)
 
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Clean Exception Printing             #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     def __print_exception(self):
         self.error_index += 1
         exc_type, exc_obj, tb = sys.exc_info()
@@ -199,10 +278,10 @@ Access: {acls}
         self.__write_error(data)
 
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Remove duplicate entries in txt file #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     def __remove_duplicates_from_file(self, f_path, o_path):
         lines_seen = set()
         out = f"{o_path}/{os.path.basename(f_path)}.cleaned"
