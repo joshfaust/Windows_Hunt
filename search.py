@@ -186,6 +186,7 @@ if __name__ == "__main__":
             print(f"[i] Windows Services:")
             print(f"\t+ {service_vulns['vuln_perms']} Services have suspect/vulnerable ACL's.")
             print(f"\t+ {service_vulns['vuln_conf']} Services can have their binpath changed by a standard user.")
+            print(f"\t+ {service_vulns['vuln_unquote']} Services have unquoted service paths (Hijack Execution Flow)")
             print(f"\t+ {args.o}services_enumeration.txt: All Services and enumerated objects")
         exit(0)
 

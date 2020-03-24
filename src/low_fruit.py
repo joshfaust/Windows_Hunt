@@ -43,6 +43,7 @@ class low_haning_fruit():
       total_services = 0  # Total Number of services
       vuln_perms = 0      # Total number of services that have suspect/vulnerable permissions (ACLS)
       vuln_conf = 0       # Total number of services where we can change the binpath as a standard user. 
+      vuln_unquote = 0    # Total number of services with unquoted service paths
 
       service_config_manager = win32service.OpenSCManager('', None, win32service.SC_MANAGER_CONNECT | win32service.SC_MANAGER_ENUMERATE_SERVICE | win32service.SC_MANAGER_QUERY_LOCK_STATUS | win32service.SERVICE_QUERY_CONFIG)
       service_manager = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ENUMERATE_SERVICE)
@@ -56,8 +57,9 @@ class low_haning_fruit():
       # For each service, enumerate its values and check ACL's / binpath edits.
       for service in win32service.EnumServicesStatus(service_manager, win32service.SERVICE_WIN32, win32service.SERVICE_STATE_ALL):
         
-        acls = ""       # Holds all ACL's obtained from filepaths.py
-        check = False   # Can we edit the current services configuration?
+        acls = ""             # Holds all ACL's obtained from filepaths.py
+        conf_check = False    # Can we edit the current services configuration?
+        unquote_check = False  # Check for unquoted service paths
 
         access = win32service.OpenService(service_config_manager, service[0], win32service.SERVICE_QUERY_CONFIG)
         config = win32service.QueryServiceConfig(access)
@@ -67,6 +69,7 @@ class low_haning_fruit():
         service_type = self.__access_from_int(config[0])
         service_start_type = self.__windows_objects.START_TYPE[config[2]]
         service_dependencies = str(config[6]).replace('"','').strip()
+        raw_bin_path = str(config[3])
         cleaned_bin_path = str(config[3]).replace('"','').strip()
         
         # find and cleanup the bin path due to CLI argument being present. 
@@ -87,7 +90,7 @@ class low_haning_fruit():
           else:
             acls += f"{spacing}{acl}\n"
 
-        # Check for bad permissions:
+        # Check for bad ACL permissions:
         suspect_service = an.analyze_acls_from_list(acl_list)
         if (suspect_service): 
           vuln_perms += 1
@@ -95,11 +98,17 @@ class low_haning_fruit():
         # Check if we can change the config:
         try:
           test = win32service.OpenService(service_config_manager, service[0], win32service.SERVICE_CHANGE_CONFIG)
-          check = True
+          conf_check = True
           vuln_conf += 1
         except:
           pass
 
+        # Check for unquoted service paths:
+        if ("program files" in raw_bin_path.lower() and '"' not in raw_bin_path.lower()):
+          unquote_check = True
+          vuln_unquote += 1
+
+      
         # Write the final data to a file. 
         data = f"""
 Short Name:{" "*5}{service_short_name}
@@ -111,13 +120,14 @@ Full Command:{" "*3}{cleaned_bin_path}
 Bin Path:{" "*7}{service_bin_path}
 ACLS:{acls}
 Suspect Perms:{" "*2}{suspect_service}
-Change Binpath: {check}
+Change Binpath: {conf_check}
+Unquoted Path:{" "*2}{unquote_check}
         """
 
         out_file.write(data)
         pbar.update(1)
 
-      return {"vuln_perms": vuln_perms, "vuln_conf": vuln_conf}
+      return {"vuln_perms": vuln_perms, "vuln_conf": vuln_conf, "vuln_unquote":vuln_unquote}
 
     except Exception as e:
       self.__print_exception()
