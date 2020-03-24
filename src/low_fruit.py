@@ -3,25 +3,161 @@ import os
 import sys
 import linecache
 import win32service
+import win32com.client
+from bs4 import BeautifulSoup
 from tqdm import tqdm
 from . import windows_objects, filepaths, analyze
 from colorama import Fore, init
 init()
 
+# --------------------------------------------------#
+# Name:     Low Hanging Fruit Class                 #
+# Purpose:  Conduct the overall DACL analysis       #
+# Author:   @jfaust0                                #
+# Website:  sevrosecurity.com                       #
+# --------------------------------------------------#
 
 class low_haning_fruit():
 
   def __init__(self, o_dir):
     self.name = "Low Hangning Fruit"
     self.__output_dir = o_dir
-    self.__windows_objects = windows_objects.windows_services()
+    self.__windows_objects = windows_objects.windows_services_and_tasks()
     self.__windows_file_path = re.compile(r'^([A-Za-z]):\\((?:[A-Za-z\d][A-Za-z\d\- \x27_\(\)~]{0,61}\\?)*[A-Za-z\d][A-Za-z\d\- \x27_\(\)]{0,61})(\.[A-Za-z\d]{1,6})?')
 
     
 
-  def get_scheduled_tasks(self):
-    #schtasks /query /fo LIST /v
-    pass
+  def analyze_scheduled_tasks(self):
+    try:
+
+      # Enumeration of the COM Object via powershell:
+      # --> $o = [activator]::CreateInstance([type]::GetTypeFromProgID('Schedule.Service'))
+      # --> $o.Connect | Get-Member
+      # --> $f = $o.GetFolder("")
+      # --> $t = $f.GetTasks(0)
+      # --> $t | Get-Member
+      '''
+      Name                  MemberType Definition
+      ----                  ---------- ----------
+      GetInstances          Method     IRunningTaskCollection GetInstances (int)
+      GetSecurityDescriptor Method     string GetSecurityDescriptor (int)
+      Run                   Method     IRunningTask Run (Variant)
+      RunEx                 Method     IRunningTask RunEx (Variant, int, int, string)
+      SetSecurityDescriptor Method     void SetSecurityDescriptor (string, int)
+      Stop                  Method     void Stop (int)
+      Definition            Property   ITaskDefinition Definition () {get}
+      Enabled               Property   bool Enabled () {get} {set}
+      LastRunTime           Property   Date LastRunTime () {get}
+      LastTaskResult        Property   int LastTaskResult () {get}
+      Name                  Property   string Name () {get}
+      NextRunTime           Property   Date NextRunTime () {get}
+      NumberOfMissedRuns    Property   int NumberOfMissedRuns () {get}
+      Path                  Property   string Path () {get}
+      State                 Property   _TASK_STATE State () {get}
+      Xml                   Property   string Xml () {get}
+      '''
+      out_file = open("scheduled_tasks_enumeration.txt", "a+")
+      total_tasks = 0
+      vuln_perms = 0
+      task_path = ""
+      task_name = ""
+      task_state = ""
+      last_run = ""
+      last_result = ""
+      next_run = ""
+
+      fp = filepaths.filepath_enumeration(self.__output_dir)
+      an = analyze.analyze(self.__output_dir)
+      scheduler = win32com.client.Dispatch('Schedule.Service')
+      scheduler.Connect()
+
+      folders = [scheduler.GetFolder('\\')]
+
+      # Get the total number of tasks to enumeration:
+      while folders:
+        folder = folders.pop(0)
+        folders += list(folder.GetFolders(0))
+        for t in folder.GetTasks(0):
+          total_tasks += 1
+
+      pbar = tqdm(total=total_tasks)
+      pbar.set_description("Analyzing Scheduled Tasks")
+
+      folders = [scheduler.GetFolder('\\')]
+      while folders:
+
+        folder = folders.pop(0)
+        folders += list(folder.GetFolders(0))
+
+        for task in folder.GetTasks(0):
+          acls = ""
+          task_path = task.Path
+          task_name = task.Name
+          task_state = self.__windows_objects.TASK_STATE[task.State]
+          last_run = task.LastRunTime
+          last_result = task.LastTaskResult
+          next_run = task.NextRunTime
+
+          try:
+            xml_data = BeautifulSoup(task.Xml, "xml")
+            raw_task_command = xml_data.find("Command").text
+            task_command = str(raw_task_command).replace('"','').strip()
+
+            # Handle ENV VAR paths
+            if ("%" in task_command):
+              env_key = re.search(r"\%(\w+)\%", task_command)
+              raw_key = str(env_key.group(1)).lower()
+              replace_key = env_key.group(0)
+              replacement = os.environ.get(raw_key)
+              task_command = task_command.replace(replace_key, replacement)
+
+          except Exception as e:
+            task_command = "Unknown"
+            
+          try:
+            task_args = xml_data.find("Arguments").text
+          except:
+            task_args = "None"
+
+          if (task_command != "Unknown"):
+            acl_list = fp.get_acl_list_return(task_command)
+
+            for i, acl in enumerate(acl_list):
+
+              if (i == 0):
+                spacing = " " *12
+              else:
+                spacing = " " * 17
+
+              if (i == (len(acl_list)-1)):
+                acls += f"{spacing}{acl}"
+              else:
+                acls += f"{spacing}{acl}\n"
+          
+          # Check for bad ACL permissions:
+          
+          suspect_task = an.analyze_acls_from_list(acl_list)
+          if (suspect_task): 
+            vuln_perms += 1
+
+          data = f"""
+Task Name:{" "*7}{task_name}
+Task Command:{" "*4}{task_command}
+Command Args:{" "*4}{task_args}
+Task Path:{" "*7}{task_path}
+Task State:{" "*6}{task_state}
+Last Run:{" "*8}{last_run}
+Next Run:{" "*8}{next_run}
+ACLS:{acls}
+Suspect Perms:{" "*3}{"suspect_task"}
+          """
+
+          out_file.write(data)
+          pbar.update(1)
+
+    except Exception as e:
+      self.__print_exception()
+    
 
 
   # ================================================#

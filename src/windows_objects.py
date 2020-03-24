@@ -1,3 +1,4 @@
+import os
 import ctypes
 import win32security
 import win32api
@@ -43,7 +44,7 @@ class nt_security_enums(Enum):
   WriteDataAddFile          =   ctypes.c_uint32(0x00000002)
   ReadDataListDirectory     =   ctypes.c_uint32(0x00000001)
 
-class windows_services():
+class windows_services_and_tasks():
 
   #https://docs.microsoft.com/en-us/dotnet/api/system.serviceprocess.servicetype?view=netframework-4.8
   SERVICE_TYPE = {
@@ -64,8 +65,22 @@ class windows_services():
     3 : "MANUAL",     # Must be started manually by the user
     4 : "DISABLED"    # service is disabled. 
   }
+
+  TASK_STATE = {
+    0 : 'Unknown',
+    1 : 'Disabled',
+    2 : 'Queued',
+    3 : 'Ready',
+    4 : 'Running'
+    }
+
+  ENV_PATH_VARS = {
+    "systemroot"    : os.environ.get("SystemRoot"),
+    "windir"        : os.environ.get("windir"),
+    "programfiles"  : os.environ.get("ProgramFiles"),
+  }
   
-  
+
 # When enumerating C:\Windows objects, this class mitigates BS redirects. 
 # For more information about SysWow64 and System32 redirects see the link below:
 # --> https://docs.microsoft.com/en-us/windows/win32/winprog64/file-system-redirector?redirectedfrom=MSDN

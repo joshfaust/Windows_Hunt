@@ -3,12 +3,10 @@ import sys
 import csv
 import argparse
 import linecache
-from src import analyze
+from src import analyze, low_fruit
 from colorama import Fore, init
 init()
 
-#test
-from src import low_fruit
 
 # ---------------------------------------------------#
 # Windows Process Information:                      #
@@ -71,6 +69,10 @@ def print_exception():
 # =======================================#
 if __name__ == "__main__":
     try:
+        
+        l = low_fruit.low_haning_fruit(".")
+        l.analyze_scheduled_tasks()
+        exit(0)
 
         parser = argparse.ArgumentParser()
         me = parser.add_mutually_exclusive_group()

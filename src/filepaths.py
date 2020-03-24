@@ -281,6 +281,7 @@ Access: {acls}
                 or "nonetype" in error
             ):
                 acls.append(str(e))
+                pass
                 return acls
 
             elif "no mapping" in error:
@@ -290,6 +291,7 @@ Access: {acls}
         INFO: https://www.rebeladmin.com/2016/01/how-to-fix-error-no-mapping-between-account-names-and-security-ids-in-active-directory/"""
 
                 acls.append(str(e))
+                pass
                 return acls
 
             else:
