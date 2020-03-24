@@ -311,19 +311,23 @@ class analyze:
     # ==============================================#
     def __check_permission(self, line):
         try:
-
+            line = line.lower()
             tmp = False
             users = [self.__username, "users", "everyone", "interactive", "authenticated"]
             permissions = [
                 "fullcontrol",
                 "write",
+                "write_dac",
+                "generic_write",
+                "key_write",
+                "write_owner",
+                "service_change_config"
                 "changepermissions",
                 "takeownership",
                 "traverse",
-                "key_write",
-                "generic_write",
                 "key_all_access",
-                "file_all_access",
+                "file_all_access"
+                "all_access",
                 "file_generic_write",
                 "generic_all"
             ]
@@ -569,6 +573,7 @@ class analyze:
 
         except Exception as e:
             self.__print_exception()
+            
 
     # ===============================================#
     # Purpose: Clean Exception Printing              #
@@ -582,6 +587,7 @@ class analyze:
         linecache.checkcache(filename)
         line = linecache.getline(filename, lineno, tmp_file.f_globals)
         print(f"{Fore.RED}EXCEPTION IN: {Fore.GREEN}{filename}\n\t[i] LINE: {lineno}, {line.strip()}\n\t[i] OBJECT: {exc_obj}{Fore.RESET}")
+
 
     # ===============================================#
     # Purpose: return Total amount of errors seen    #
