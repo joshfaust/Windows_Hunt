@@ -7,6 +7,9 @@ from src import analyze
 from colorama import Fore, init
 init()
 
+#test
+from src import low_fruit
+
 # ---------------------------------------------------#
 # Windows Process Information:                      #
 # This script / set of scripts is designed to take  #
@@ -96,7 +99,15 @@ if __name__ == "__main__":
             default=None,
             metavar='',
             required=False,
-            help="Analyze all files (Recursive) within a given path"
+            help="Analyze all files (Recursive) given a path"
+        )
+        me.add_argument(
+            "-F",
+            "--fruit",
+            action="store_true",
+            dest="fruit",
+            required=False,
+            help="Run a full analysis (Low Hanging Fruit)"
         )
         parser.add_argument(
             "-t",
@@ -126,7 +137,7 @@ if __name__ == "__main__":
         # Class Objects:
         a = analyze.analyze(args.o)
 
-        if args.p != None:
+        if (args.p != None):
             # Check to make sure Procmon File is CSV:
             with open(args.p, "r") as f:
                 if not csv.Sniffer().has_header(f.read(2014)):
@@ -148,7 +159,7 @@ if __name__ == "__main__":
             print(f"\t+ {args.o}evil.xlsx:\t\tKeys denoted as improperly configured/interesting")
             print(f"\t+ {args.o}errors.txt:\t\tDetails of all errors observed")
 
-        if args.acl != None:
+        if (args.acl != None):
             interesting_items = a.analyze_acls_from_file(args.acl)
             print("-" * 125)
             print(f"[i] {interesting_items} Were found to have Write or FullContol Permissions.")
@@ -168,7 +179,16 @@ if __name__ == "__main__":
             print(f"\t+ {args.o}evil.xlsx:\t\tKeys denoted as improperly configured/interesting")
             print(f"\t+ {args.o}errors.txt:\t\tDetails of all errors observed")
 
+        if (args.fruit):
+            low = low_fruit.low_haning_fruit(args.o)
+            service_vulns = low.analyze_all_services()
+            print("-" * 125)
+            print(f"[i] Windows Services:")
+            print(f"\t+ {service_vulns['vuln_perms']} Services have suspect/vulnerable ACL's.")
+            print(f"\t+ {service_vulns['vuln_conf']} Services can have their binpath changed by a standard user.")
+            print(f"\t+ {args.o}services_enumeration.txt: All Services and enumerated objects")
         exit(0)
+
 
     except Exception as e:
         print_exception()

@@ -256,10 +256,10 @@ Access: {acls}
 
         return rights
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Write to File Function for threads   #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     def __write_acl(self, data):
         try:
             # wait until the file is unlocked.
@@ -294,10 +294,10 @@ Access: {acls}
             exit(1)
 
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Clean Exception Printing             #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     def __print_exception(self):
       self.error_index += 1
       exc_type, exc_obj, tb = sys.exc_info()

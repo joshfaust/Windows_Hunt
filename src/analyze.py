@@ -14,12 +14,12 @@ from colorama import Fore, init
 
 init()
 
-# ---------------------------------------------------#
+# --------------------------------------------------#
 # Name:     Analysis Class                          #
 # Purpose:  Conduct the overall DACL analysis       #
 # Author:   @jfaust0                                #
 # Website:  sevrosecurity.com                       #
-# ---------------------------------------------------#
+# --------------------------------------------------#
 
 
 class analyze:
@@ -31,13 +31,13 @@ class analyze:
         self.__file_enum = filepaths.filepath_enumeration(self.__output_dir)
         self.__username = str(getpass.getuser()).lower()
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: loads raw procmon csv output into a  #
     # Pandas dataframe, removed duplicates, and     #
     # outputs all cleaned / de-duplicated objects   #
     # to cleaned_paths.txt                          #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     def parse_procmon_csv(self, p_file):
         try:
             # Names we do not want to enumerate
@@ -130,10 +130,10 @@ class analyze:
         except Exception as e:
             self.__print_exception()
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Thread the win32api DACL lookups     #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     ## build_command_list --> __thread_commands --> __get_acl_list --> __write_acl
     def build_command_list_procmon(self, total_threads):
         try:
@@ -194,10 +194,10 @@ class analyze:
 
 
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Thread the win32api DACL lookups     #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     ## build_command_list --> __thread_commands --> __get_acl_list --> __write_acl
     def build_command_list_path(self, total_threads, path):
         try:
@@ -249,10 +249,10 @@ class analyze:
         except Exception as e:
             self.__print_exception()
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Thread the win32api DACL lookups     #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     def __thread_commands(self, commands, analysis_type):
         try:
             threads = []
@@ -303,12 +303,12 @@ class analyze:
         except Exception as e:
             self.__print_exception()
 
-    # ===============================================#
+    # ==============================================#
     # Purpose:Check for suspect permission sets     #
     # Return: Boolean                               #
     #   - True: Found suspect Permission            #
     #   - False: benign                             #
-    # ===============================================#
+    # ==============================================#
     def __check_permission(self, line):
         try:
 
@@ -342,12 +342,12 @@ class analyze:
         except Exception as e:
             self.__print_exception()
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: analyzes the filepaths or registry   #
     # class looking for abusable permissions        #
     #                                               #
     # Return: int - # of suspect permissions        #
-    # ===============================================#
+    # ==============================================#
     def analyze_acls(self):
         try:
             df = pd.DataFrame(columns=["Process_Name", "Integrity", "Operation", "Accessed Object", "ACLs"])
@@ -444,13 +444,13 @@ class analyze:
         except Exception as e:
             self.__print_exception()
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Given a file of DACLs, this function #
     # analyzes the filepaths or registry class      #
     # looking for abusable permissions              #
     #                                               #
     # Return: int - # of suspect permissions        #
-    # ===============================================#
+    # ==============================================#
     def analyze_acls_from_file(self, file):
         try:
             df = pd.DataFrame(columns=["Process_Name", "Integrity", "Operation", "Accessed Object", "ACLs"])
@@ -542,6 +542,30 @@ class analyze:
 
             df.to_excel(self.__final_report)
             return fun_index
+
+        except Exception as e:
+            self.__print_exception()
+
+
+    # ==============================================#
+    # Purpose: Given a list of ACL's, enumerate if  #
+    # we have control over the object via a         # 
+    # low-priv account                              #
+    #                                               #
+    # Return: Boolean                               #
+    # ==============================================#
+    def analyze_acls_from_list(self, acl_list):
+        try:
+            add = False  # Placeholder to determine if user has full permissions
+
+            for line in acl_list:
+                line = line.lower()
+
+                user_full_control = self.__check_permission(line)
+                if user_full_control:
+                    add = True
+
+            return add
 
         except Exception as e:
             self.__print_exception()

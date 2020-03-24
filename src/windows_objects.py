@@ -42,8 +42,33 @@ class nt_security_enums(Enum):
   AppendDataAddSubdirectory =   ctypes.c_uint32(0x00000004)
   WriteDataAddFile          =   ctypes.c_uint32(0x00000002)
   ReadDataListDirectory     =   ctypes.c_uint32(0x00000001)
+
+class windows_services():
+
+  #https://docs.microsoft.com/en-us/dotnet/api/system.serviceprocess.servicetype?view=netframework-4.8
+  SERVICE_TYPE = {
+    1   : "KERNEL DRIVER",
+    2   : "FILE SYSTEM DRIVER",
+    4   : "ADAPTER",
+    8   : "RECOGNIZER DRIVER",
+    16  : "WIN32_OWN_PROCESS",
+    32  : "WIN32_SHARE_PROCESS",
+    256 : "INTERACTIVE_PROCESS"
+  }
+
+  # https://docs.microsoft.com/en-us/dotnet/api/system.serviceprocess.servicestartmode?view=netframework-4.8
+  START_TYPE = {
+    0 : "BOOT",       # Started by the system loader (device drivers)
+    1 : "SYSTEM",     # Device driver started by IOInitSystem()
+    2 : "AUTOMATIC",  # Started by the OS at system startup
+    3 : "MANUAL",     # Must be started manually by the user
+    4 : "DISABLED"    # service is disabled. 
+  }
+  
   
 # When enumerating C:\Windows objects, this class mitigates BS redirects. 
+# For more information about SysWow64 and System32 redirects see the link below:
+# --> https://docs.microsoft.com/en-us/windows/win32/winprog64/file-system-redirector?redirectedfrom=MSDN
 class disable_file_system_redirection:
     _disable = ctypes.windll.kernel32.Wow64DisableWow64FsRedirection
     _revert = ctypes.windll.kernel32.Wow64RevertWow64FsRedirection
