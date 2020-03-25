@@ -23,18 +23,19 @@ init()
 
 
 class filepath_enumeration:
-    def __init__(self, o_dir):
+    def __init__(self, o_dir, initialize):
         self.name = "Filepath Enumeration"
         self.error_index = 0
         self.__output_dir = o_dir
         self.__mutex = threading.Lock()
         self.__error_mutex = threading.Lock()
-        self.__acl_out_file = open(f"{self.__output_dir}/raw_acls.txt", "a+")
-        self.__error_out_file = open(f"{self.__output_dir}/errors.txt", "a+")
         self.__CONVENTIONAL_ACES = {
             win32security.ACCESS_ALLOWED_ACE_TYPE: "ALLOW",
             win32security.ACCESS_DENIED_ACE_TYPE: "DENY",
-        }
+        }        
+        if (initialize):
+            self.__acl_out_file = open(f"{self.__output_dir}/raw_acls.txt", "a+")
+            self.__error_out_file = open(f"{self.__output_dir}/errors.txt", "a+")
 
     # ==============================================#
     # Purpose: Writes ACL values for a single file  #

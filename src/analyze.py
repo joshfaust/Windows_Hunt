@@ -23,12 +23,15 @@ init()
 
 
 class analyze:
-    def __init__(self, o_dir):
+
+    # o_dir = output directory
+    # initialize = do you want to initialize all write objects?
+    def __init__(self, o_dir, initialize):
         self.name = "Analysis"
         self.__output_dir = o_dir
         self.__final_report = f"{self.__output_dir}/evil.xlsx"
-        self.__reg_enum = registry.registry_enumeration(self.__output_dir)
-        self.__file_enum = filepaths.filepath_enumeration(self.__output_dir)
+        self.__reg_enum = registry.registry_enumeration(self.__output_dir, initialize)
+        self.__file_enum = filepaths.filepath_enumeration(self.__output_dir, initialize)
         self.__username = str(getpass.getuser()).lower()
 
     # ==============================================#
@@ -573,7 +576,7 @@ class analyze:
 
         except Exception as e:
             self.__print_exception()
-            
+
 
     # ===============================================#
     # Purpose: Clean Exception Printing              #

@@ -24,7 +24,8 @@ init()
 
 
 class registry_enumeration:
-    def __init__(self, o_dir):
+    
+    def __init__(self, o_dir, initialize):
         self.name = "Registry Enumeration"
         self.error_index = 0
         self.re_valid_string = re.compile("^[ADO][ADLU]?\:\(.*\)$")
@@ -41,14 +42,15 @@ class registry_enumeration:
         self.TRUSTEE = self.SDDL_OBJECT.TRUSTEE
         self.ACCESS_HEX = self.SDDL_OBJECT.ACCESS_HEX
         self.__output_dir = o_dir
-        self.__acl_out_file = open(f"{self.__output_dir}/raw_acls.txt", "a+")
-        self.__error_out_file = open(f"{self.__output_dir}/errors.txt", "a+")
         self.__mutex = threading.Lock()
         self.__error_mutex = threading.Lock()
         self.__CONVENTIONAL_ACES = {
             win32security.ACCESS_ALLOWED_ACE_TYPE: "ALLOW",
             win32security.ACCESS_DENIED_ACE_TYPE: "DENY",
         }
+        if (initialize):
+            self.__acl_out_file = open(f"{self.__output_dir}/raw_acls.txt", "a+")
+            self.__error_out_file = open(f"{self.__output_dir}/errors.txt", "a+")
 
     # ===============================================#
     # Purpose: Obtains ACL values for a single      #

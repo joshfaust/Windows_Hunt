@@ -1,6 +1,7 @@
 import re
 import os
 import sys
+import getpass
 import linecache
 import win32service
 import win32com.client
@@ -17,130 +18,276 @@ init()
 # Website:  sevrosecurity.com                       #
 # --------------------------------------------------#
 
-class low_haning_fruit():
 
-  def __init__(self, o_dir):
-    self.name = "Low Hangning Fruit"
-    self.__output_dir = o_dir
-    self.__windows_objects = windows_objects.windows_services_and_tasks()
-    self.__windows_file_path = re.compile(r'^([A-Za-z]):\\((?:[A-Za-z\d][A-Za-z\d\- \x27_\(\)~]{0,61}\\?)*[A-Za-z\d][A-Za-z\d\- \x27_\(\)]{0,61})(\.[A-Za-z\d]{1,6})?')
+class low_haning_fruit:
+    def __init__(self, o_dir):
+        self.name = "Low Hangning Fruit"
+        self.__output_dir = o_dir
+        self.__windows_objects = windows_objects.windows_services_and_tasks()
+        self.__windows_file_path = re.compile(r"^([A-Za-z]):\\((?:[A-Za-z\d][A-Za-z\d\- \x27_\(\)~]{0,61}\\?)*[A-Za-z\d][A-Za-z\d\- \x27_\(\)]{0,61})(\.[A-Za-z\d]{1,6})?")
+        self.__password_regex = re.compile(r"(?i)(adminpassword|password|pass|login|creds)( |)(=|:).*")
+        self.__username = str(getpass.getuser()).lower()
 
-    
 
-  def analyze_scheduled_tasks(self):
-    try:
 
-      # Enumeration of the COM Object via powershell:
-      # --> $o = [activator]::CreateInstance([type]::GetTypeFromProgID('Schedule.Service'))
-      # --> $o.Connect | Get-Member
-      # --> $f = $o.GetFolder("")
-      # --> $t = $f.GetTasks(0)
-      # --> $t | Get-Member
-      '''
-      Name                  MemberType Definition
-      ----                  ---------- ----------
-      GetInstances          Method     IRunningTaskCollection GetInstances (int)
-      GetSecurityDescriptor Method     string GetSecurityDescriptor (int)
-      Run                   Method     IRunningTask Run (Variant)
-      RunEx                 Method     IRunningTask RunEx (Variant, int, int, string)
-      SetSecurityDescriptor Method     void SetSecurityDescriptor (string, int)
-      Stop                  Method     void Stop (int)
-      Definition            Property   ITaskDefinition Definition () {get}
-      Enabled               Property   bool Enabled () {get} {set}
-      LastRunTime           Property   Date LastRunTime () {get}
-      LastTaskResult        Property   int LastTaskResult () {get}
-      Name                  Property   string Name () {get}
-      NextRunTime           Property   Date NextRunTime () {get}
-      NumberOfMissedRuns    Property   int NumberOfMissedRuns () {get}
-      Path                  Property   string Path () {get}
-      State                 Property   _TASK_STATE State () {get}
-      Xml                   Property   string Xml () {get}
-      '''
-      out_file = open("scheduled_tasks_enumeration.txt", "a+")
-      total_tasks = 0
-      vuln_perms = 0
-      task_path = ""
-      task_name = ""
-      task_state = ""
-      last_run = ""
-      last_result = ""
-      next_run = ""
+    # ======================================================#
+    # Purpose: Looks through the filesystem examining known #
+    # files that contain passwords/credentials as well as   #
+    # dynamically assessing if a file is worth              #
+    # investigating further based on filename/type          #
+    #                                                       #
+    # Return: dict - contains number of issues found        #
+    # ======================================================#
+    def look_for_credentials(self):
+        try:
+            # Output File
+            out_file = open(f"{self.__output_dir}/credential_enumeration.txt", "a+")
 
-      fp = filepaths.filepath_enumeration(self.__output_dir)
-      an = analyze.analyze(self.__output_dir)
-      scheduler = win32com.client.Dispatch('Schedule.Service')
-      scheduler.Connect()
+            # Function Variables
+            found_cred_files = 0            # counter of files that have credentials/passwords within. (dictated by regex)
+            found_known_cred_files = []     # Holds all found files that match with known_cred_files[]
+            interesting_file_paths = []     # Holds all interesting files the deem further analysis
 
-      folders = [scheduler.GetFolder('\\')]
+            interesting_file_types = [
+                ".ini", 
+                ".xml", 
+                ".conf", 
+                ".config", 
+                ".inf",
+                ".txt"
+                ]
+            known_cred_files = [
+                "sysprep.inf",
+                "sysprep.xml",
+                "unattended.xml",
+                "unattend.xml",
+                "services.xml",
+                "scheduledtasks.xml",
+                "printers.xml",
+                "drives.xml",
+                "datasources.xml",
+                "groups.xml"
+                ]
+            exclusion_list = [
+                "credential_enumeration.txt"
+                ]
 
-      # Get the total number of tasks to enumeration:
-      while folders:
-        folder = folders.pop(0)
-        folders += list(folder.GetFolders(0))
-        for t in folder.GetTasks(0):
-          total_tasks += 1
+            # We need to disable the file system redirects before enumerating any 
+            # privileged paths such as C:\Windows\System32. 
+            print("\n[i] Enumerating all system files. Please Wait.")
+            with windows_objects.disable_file_system_redirection():
+                for root, dirs, files in os.walk("C:\\"):
+                    for file in files:
+                        if (file.endswith(tuple(interesting_file_types)) 
+                        and file.lower() not in known_cred_files
+                        and file.lower() not in exclusion_list):
 
-      pbar = tqdm(total=total_tasks)
-      pbar.set_description("Analyzing Scheduled Tasks")
+                            full_path = os.path.join(root, file)
+                            interesting_file_paths.append(full_path)
+                        
+                        if (file.lower() in known_cred_files
+                        and file.lower() not in exclusion_list):
 
-      folders = [scheduler.GetFolder('\\')]
-      while folders:
+                            full_path = os.path.join(root, file)
+                            found_known_cred_files.append(full_path)
 
-        folder = folders.pop(0)
-        folders += list(folder.GetFolders(0))
 
-        for task in folder.GetTasks(0):
-          acls = ""
-          task_path = task.Path
-          task_name = task.Name
-          task_state = self.__windows_objects.TASK_STATE[task.State]
-          last_run = task.LastRunTime
-          last_result = task.LastTaskResult
-          next_run = task.NextRunTime
+            # Analyze the found_known_cred_files list 
+            pbar = tqdm(total=len(found_known_cred_files))
+            pbar.set_description("Analyzing Known Credential Files")
+            for file_path in found_known_cred_files:
+                added = False
+                try:
+                    # For each line in a singular file, check it against the regex
+                    # to determine if passwords/credentials present.
+                    for i, line in enumerate(open(file_path, encoding="utf-8")):
+                        creds = re.search(self.__password_regex, line)
+                        if (creds != None):
 
-          try:
-            xml_data = BeautifulSoup(task.Xml, "xml")
-            raw_task_command = xml_data.find("Command").text
-            task_command = str(raw_task_command).replace('"','').strip()
+                            if (not added):
+                                out_file.write(f"FILE:{' ' * 4}{file_path}\n")
+                                added = True
+                                found_cred_files += 1
 
-            # Handle ENV VAR paths
-            if ("%" in task_command):
-              env_key = re.search(r"\%(\w+)\%", task_command)
-              raw_key = str(env_key.group(1)).lower()
-              replace_key = env_key.group(0)
-              replacement = os.environ.get(raw_key)
-              task_command = task_command.replace(replace_key, replacement)
+                            out_file.write(f"CREDS:{' ' * 3}{str(creds.group())[0:100]}\n")
 
-          except Exception as e:
-            task_command = "Unknown"
+                except Exception as e:
+                    pass
+
+                if (added):
+                    out_file.write("-"*100 + "\n")
+
+                pbar.update(1)
+            pbar.close()
             
-          try:
-            task_args = xml_data.find("Arguments").text
-          except:
-            task_args = "None"
+            # Analyze files that met the interesting file type criteria
+            pbar = tqdm(total=len(interesting_file_paths))
+            pbar.set_description("Analyzing Possible Credential Files")
+            for file_path in interesting_file_paths:
+                added = False
+                try:
+                    # For each line in a singular file, check it against the regex
+                    # to determine if passwords/credentials present.
+                    for i, line in enumerate(open(file_path, encoding="utf-8")):
+                        creds = re.search(self.__password_regex, line)
+                        if (creds != None):
 
-          if (task_command != "Unknown"):
-            acl_list = fp.get_acl_list_return(task_command)
+                            if (not added):
+                                out_file.write(f"FILE:{' ' * 4}{file_path}\n")
+                                added = True
+                                found_cred_files += 1
 
-            for i, acl in enumerate(acl_list):
+                            out_file.write(f"CREDS:{' ' * 3}{str(creds.group())[0:100]}\n")
 
-              if (i == 0):
-                spacing = " " *12
-              else:
-                spacing = " " * 17
+                except Exception as e:
+                    pass
+                
+                if (added):
+                    out_file.write("-"*100 + "\n")
 
-              if (i == (len(acl_list)-1)):
-                acls += f"{spacing}{acl}"
-              else:
-                acls += f"{spacing}{acl}\n"
-          
-          # Check for bad ACL permissions:
-          
-          suspect_task = an.analyze_acls_from_list(acl_list)
-          if (suspect_task): 
-            vuln_perms += 1
+                pbar.update(1)
+            pbar.close()
 
-          data = f"""
+            return {"total_cred_files": found_cred_files}
+
+        except Exception as e:
+            self.__print_exception()
+
+    # ======================================================#
+    # Purpose: Enumerates all scheduled tasks and looks     #
+    # for open / liberal ACL permissions to the command.    #
+    #                                                       #
+    # Return: dict - contains number of issues found        #
+    # ======================================================#
+    def analyze_scheduled_tasks(self):
+
+        """
+        # Enumeration of the COM Object via powershell:
+            --> $o = [activator]::CreateInstance([type]::GetTypeFromProgID('Schedule.Service'))
+            --> $o.Connect | Get-Member
+            --> $f = $o.GetFolder("")
+            --> $t = $f.GetTasks(0)
+            --> $t | Get-Member
+        
+        Name                  MemberType Definition
+        ----                  ---------- ----------
+        GetInstances          Method     IRunningTaskCollection GetInstances (int)
+        GetSecurityDescriptor Method     string GetSecurityDescriptor (int)
+        Run                   Method     IRunningTask Run (Variant)
+        RunEx                 Method     IRunningTask RunEx (Variant, int, int, string)
+        SetSecurityDescriptor Method     void SetSecurityDescriptor (string, int)
+        Stop                  Method     void Stop (int)
+        Definition            Property   ITaskDefinition Definition () {get}
+        Enabled               Property   bool Enabled () {get} {set}
+        LastRunTime           Property   Date LastRunTime () {get}
+        LastTaskResult        Property   int LastTaskResult () {get}
+        Name                  Property   string Name () {get}
+        NextRunTime           Property   Date NextRunTime () {get}
+        NumberOfMissedRuns    Property   int NumberOfMissedRuns () {get}
+        Path                  Property   string Path () {get}
+        State                 Property   _TASK_STATE State () {get}
+        Xml                   Property   string Xml () {get}
+        """
+
+        try:
+            # Function Variables / Objects
+            out_file = open(f"{self.__output_dir}/scheduled_tasks_enumeration.txt", "a+")
+            total_tasks = 0
+            vuln_perms = 0
+            acl_list = []
+            vuln_tasks = []
+            task_path = ""
+            task_name = ""
+            task_state = ""
+            last_run = ""
+            last_result = ""
+            next_run = ""
+
+            # Class Objects
+            fp = filepaths.filepath_enumeration(self.__output_dir, False)
+            an = analyze.analyze(self.__output_dir, False)
+
+            # Windows Schedule.Service COM Object initialization
+            scheduler = win32com.client.Dispatch("Schedule.Service")
+            scheduler.Connect()
+            folders = [scheduler.GetFolder("\\")]
+
+            # Get the total number of tasks to enumerate:
+            while folders:
+                folder = folders.pop(0)
+                folders += list(folder.GetFolders(0))
+                for t in folder.GetTasks(0):
+                    total_tasks += 1
+
+            pbar = tqdm(total=total_tasks)
+            pbar.set_description("Analyzing Scheduled Tasks")
+            
+            # Enumerate each task individually
+            folders = [scheduler.GetFolder("\\")]
+            while folders:
+
+                folder = folders.pop(0)
+                folders += list(folder.GetFolders(0))
+
+                for task in folder.GetTasks(0):
+                    acls = ""
+                    task_path = task.Path
+                    task_name = task.Name
+                    task_state = self.__windows_objects.TASK_STATE[task.State]
+                    last_run = task.LastRunTime
+                    last_result = task.LastTaskResult
+                    next_run = task.NextRunTime
+
+                    # We have to pull the XML object to obtain the command/executable
+                    # that is scheduled to run. This has issues where at times, there
+                    # is not command object.
+                    try:
+                        xml_data = BeautifulSoup(task.Xml, "xml")
+                        raw_task_command = xml_data.find("Command").text
+                        task_command = str(raw_task_command).replace('"', "").strip()
+
+                        # Handle ENV VAR paths
+                        if "%" in task_command:
+                            env_key = re.search(r"\%(\w+)\%", task_command)
+                            raw_key = str(env_key.group(1)).lower()
+                            replace_key = env_key.group(0)
+                            replacement = os.environ.get(raw_key)
+                            task_command = task_command.replace(replace_key, replacement)
+
+                    except Exception as e:
+                        task_command = "Unknown"
+
+                    # Within the XML, there is an Arguments parameter. This is something
+                    # we parse for further analysis. (i.e., look for other exe/dll objects)
+                    try:
+                        task_args = xml_data.find("Arguments").text
+                    except:
+                        task_args = "None"
+
+                    # If the Command is not Unknown, obtain its ACL's for further analysis.
+                    if task_command != "Unknown":
+                        acl_list = fp.get_acl_list_return(task_command)
+
+                        for i, acl in enumerate(acl_list):
+
+                            if i == 0:
+                                spacing = " " * 12
+                            else:
+                                spacing = " " * 17
+
+                            if i == (len(acl_list) - 1):
+                                acls += f"{spacing}{acl}"
+                            else:
+                                acls += f"{spacing}{acl}\n"
+
+                    # Analyze the Commands ACL values for access rights issues / vulns.
+                    suspect_task = an.analyze_acls_from_list(acl_list)
+                    if suspect_task:
+                        vuln_perms += 1
+                        if (task_name not in vuln_tasks):
+                            vuln_tasks.append(task_name)
+
+                    data = f"""
 Task Name:{" "*7}{task_name}
 Task Command:{" "*4}{task_command}
 Command Args:{" "*4}{task_args}
@@ -151,102 +298,144 @@ Next Run:{" "*8}{next_run}
 ACLS:{acls}
 Suspect Perms:{" "*3}{"suspect_task"}
           """
+                    out_file.write(data)
+                    pbar.update(1)
 
-          out_file.write(data)
-          pbar.update(1)
+            return {
+                "total_tasks": total_tasks,
+                "vuln_tasks": vuln_tasks,
+                "vuln_perms": vuln_perms
+            }
 
-    except Exception as e:
-      self.__print_exception()
-    
+        except Exception as e:
+            self.__print_exception()
 
 
-  # ================================================#
-  # Purpose: Enumerates all services. Specifically  #
-  # we check for vulnerable ACL's on the binpath    #
-  # and we check to see if we can open the service  #
-  # handle with EDIT/CHANGE permissions in order to #
-  # change the binpath. These two checks are        #
-  # stored as boolean values in the final report.   #
-  # Return: dict - contains number of vulns found   #
-  # ================================================#
-  def analyze_all_services(self):
-    try:
-
-      fp = filepaths.filepath_enumeration(self.__output_dir)
-      an = analyze.analyze(self.__output_dir)
-
-      out_file = open(f"{self.__output_dir}/services_enumeration.txt", "a+")
-      total_services = 0  # Total Number of services
-      vuln_perms = 0      # Total number of services that have suspect/vulnerable permissions (ACLS)
-      vuln_conf = 0       # Total number of services where we can change the binpath as a standard user. 
-      vuln_unquote = 0    # Total number of services with unquoted service paths
-
-      service_config_manager = win32service.OpenSCManager('', None, win32service.SC_MANAGER_CONNECT | win32service.SC_MANAGER_ENUMERATE_SERVICE | win32service.SC_MANAGER_QUERY_LOCK_STATUS | win32service.SERVICE_QUERY_CONFIG)
-      service_manager = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ENUMERATE_SERVICE)
-
-      # Hacky way to get the total number of services
-      for service in win32service.EnumServicesStatus(service_manager, win32service.SERVICE_WIN32, win32service.SERVICE_STATE_ALL):
-        total_services += 1
-
-      pbar = tqdm(total=total_services)
-      pbar.set_description("Analyzing Services")
-      # For each service, enumerate its values and check ACL's / binpath edits.
-      for service in win32service.EnumServicesStatus(service_manager, win32service.SERVICE_WIN32, win32service.SERVICE_STATE_ALL):
-        
-        acls = ""             # Holds all ACL's obtained from filepaths.py
-        conf_check = False    # Can we edit the current services configuration?
-        unquote_check = False  # Check for unquoted service paths
-
-        access = win32service.OpenService(service_config_manager, service[0], win32service.SERVICE_QUERY_CONFIG)
-        config = win32service.QueryServiceConfig(access)
-
-        service_short_name = str(service[0]).replace('"','').strip()
-        service_long_name = str(service[1]).replace('"','').strip()
-        service_type = self.__access_from_int(config[0])
-        service_start_type = self.__windows_objects.START_TYPE[config[2]]
-        service_dependencies = str(config[6]).replace('"','').strip()
-        raw_bin_path = str(config[3])
-        cleaned_bin_path = str(config[3]).replace('"','').strip()
-        
-        # find and cleanup the bin path due to CLI argument being present. 
-        service_bin_path = re.findall(self.__windows_file_path, cleaned_bin_path)[0]
-        service_bin_path = os.path.join(service_bin_path[0]+":\\",service_bin_path[1]+service_bin_path[2])
-
-        # Analyze ACL's for the Bin Path:
-        acl_list = fp.get_acl_list_return(service_bin_path)
-        for i, acl in enumerate(acl_list):
-
-          if (i == 0):
-            spacing = " " * 11
-          else:
-            spacing = " " * 16
-
-          if (i == (len(acl_list)-1)):
-            acls += f"{spacing}{acl}"
-          else:
-            acls += f"{spacing}{acl}\n"
-
-        # Check for bad ACL permissions:
-        suspect_service = an.analyze_acls_from_list(acl_list)
-        if (suspect_service): 
-          vuln_perms += 1
-
-        # Check if we can change the config:
+    # ====================================================#
+    # Purpose: Enumerates all services. Specifically we   #
+    # check for vulnerable ACL's on the binpath and we    #
+    # check to see if we can open the service handle with #
+    # EDIT/CHANGE permissions in order to change the      #
+    # binpath. These two checks are stored as boolean     #
+    # values in the final report.                         #
+    #                                                     #
+    # Return: dict - contains number of vulns found       #
+    # ====================================================#
+    def analyze_all_services(self):
         try:
-          test = win32service.OpenService(service_config_manager, service[0], win32service.SERVICE_CHANGE_CONFIG)
-          conf_check = True
-          vuln_conf += 1
-        except:
-          pass
 
-        # Check for unquoted service paths:
-        if ("program files" in raw_bin_path.lower() and '"' not in raw_bin_path.lower()):
-          unquote_check = True
-          vuln_unquote += 1
+            fp = filepaths.filepath_enumeration(self.__output_dir, False)
+            an = analyze.analyze(self.__output_dir, False)
 
-      
-        # Write the final data to a file. 
-        data = f"""
+            out_file = open(f"{self.__output_dir}/services_enumeration.txt", "a+")
+            total_services = 0  # Total Number of services
+            vuln_perms = 0  # Total number of services that have suspect/vulnerable permissions (ACLS)
+            vuln_conf = 0  # Total number of services where we can change the binpath as a standard user.
+            vuln_unquote = 0  # Total number of services with unquoted service paths
+            vuln_services = []  # List of all services tht can potentially be exploited
+
+            service_config_manager = win32service.OpenSCManager(
+                "",
+                None,
+                win32service.SC_MANAGER_CONNECT
+                | win32service.SC_MANAGER_ENUMERATE_SERVICE
+                | win32service.SC_MANAGER_QUERY_LOCK_STATUS
+                | win32service.SERVICE_QUERY_CONFIG,
+            )
+            service_manager = win32service.OpenSCManager(
+                None, None, win32service.SC_MANAGER_ENUMERATE_SERVICE
+            )
+
+            # Hacky way to get the total number of services
+            for service in win32service.EnumServicesStatus(
+                service_manager,
+                win32service.SERVICE_WIN32,
+                win32service.SERVICE_STATE_ALL,
+            ):
+                total_services += 1
+
+            pbar = tqdm(total=total_services)
+            pbar.set_description("Analyzing Services")
+            # For each service, enumerate its values and check ACL's / binpath edits.
+            for service in win32service.EnumServicesStatus(
+                service_manager,
+                win32service.SERVICE_WIN32,
+                win32service.SERVICE_STATE_ALL,
+            ):
+
+                acls = ""  # Holds all ACL's obtained from filepaths.py
+                conf_check = False  # Can we edit the current services configuration?
+                unquote_check = False  # Check for unquoted service paths
+
+                access = win32service.OpenService(
+                    service_config_manager,
+                    service[0],
+                    win32service.SERVICE_QUERY_CONFIG,
+                )
+                config = win32service.QueryServiceConfig(access)
+
+                service_short_name = str(service[0]).replace('"', "").strip()
+                service_long_name = str(service[1]).replace('"', "").strip()
+                service_type = self.__access_from_int(config[0])
+                service_start_type = self.__windows_objects.START_TYPE[config[2]]
+                service_dependencies = str(config[6]).replace('"', "").strip()
+                raw_bin_path = str(config[3])
+                cleaned_bin_path = str(config[3]).replace('"', "").strip()
+
+                # find and cleanup the bin path due to CLI argument being present.
+                service_bin_path = re.findall(
+                    self.__windows_file_path, 
+                    cleaned_bin_path)[0]
+
+                service_bin_path = os.path.join(
+                    service_bin_path[0] + ":\\",
+                    service_bin_path[1] + service_bin_path[2])
+
+                # Analyze ACL's for the Bin Path:
+                acl_list = fp.get_acl_list_return(service_bin_path)
+                for i, acl in enumerate(acl_list):
+
+                    if i == 0:
+                        spacing = " " * 11
+                    else:
+                        spacing = " " * 16
+
+                    if i == (len(acl_list) - 1):
+                        acls += f"{spacing}{acl}"
+                    else:
+                        acls += f"{spacing}{acl}\n"
+
+                # Check for bad ACL permissions:
+                suspect_service = an.analyze_acls_from_list(acl_list)
+                if suspect_service:
+                    vuln_perms += 1
+                    if service_short_name not in vuln_services:
+                        vuln_services.append(service_short_name)
+
+                # Check if we can change the config:
+                try:
+                    test = win32service.OpenService(
+                        service_config_manager,
+                        service[0],
+                        win32service.SERVICE_CHANGE_CONFIG,
+                    )
+                    conf_check = True
+                    vuln_conf += 1
+                    if service_short_name not in vuln_services:
+                        vuln_services.append(service_short_name)
+                except:
+                    pass
+
+                # Check for unquoted service paths:
+                if ("program files" in raw_bin_path.lower()
+                    and '"' not in raw_bin_path.lower()):
+                    unquote_check = True
+                    vuln_unquote += 1
+                    if service_short_name not in vuln_services:
+                        vuln_services.append(service_short_name)
+
+                # Write the final data to a file.
+                data = f"""
 Short Name:{" "*5}{service_short_name}
 Long Name:{" "*6}{service_long_name}
 Service Type:{" "*3}{config[0]} {service_type}
@@ -260,42 +449,48 @@ Change Binpath: {conf_check}
 Unquoted Path:{" "*2}{unquote_check}
         """
 
-        out_file.write(data)
-        pbar.update(1)
+                out_file.write(data)
+                pbar.update(1)
 
-      return {"vuln_perms": vuln_perms, "vuln_conf": vuln_conf, "vuln_unquote":vuln_unquote}
+            return {
+                "total_services": total_services,
+                "vuln_perms": vuln_perms,
+                "vuln_conf": vuln_conf,
+                "vuln_unquote": vuln_unquote,
+                "vuln_services": vuln_services
+            }
 
-    except Exception as e:
-      self.__print_exception()
-      exit(1)
+        except Exception as e:
+            self.__print_exception()
+            exit(1)
 
+    # ==============================================#
+    # Purpose: Clean Exception Printing             #
+    # Return: None                                  #
+    # ==============================================#
+    def __print_exception(self):
+        exc_type, exc_obj, tb = sys.exc_info()
+        tmp_file = tb.tb_frame
+        lineno = tb.tb_lineno
+        filename = tmp_file.f_code.co_filename
+        linecache.checkcache(filename)
+        line = linecache.getline(filename, lineno, tmp_file.f_globals)
+        print(
+            f"{Fore.RED}EXCEPTION IN: {Fore.GREEN}{filename}\n\t[i] LINE: {lineno}, {line.strip()}\n\t[i] OBJECT: {exc_obj}{Fore.RESET}"
+        )
 
-  # ===============================================#
-  # Purpose: Clean Exception Printing             #
-  # Return: None                                  #
-  # ===============================================#
-  def __print_exception(self):
-    exc_type, exc_obj, tb = sys.exc_info()
-    tmp_file = tb.tb_frame
-    lineno = tb.tb_lineno
-    filename = tmp_file.f_code.co_filename
-    linecache.checkcache(filename)
-    line = linecache.getline(filename, lineno, tmp_file.f_globals)
-    print(f"{Fore.RED}EXCEPTION IN: {Fore.GREEN}{filename}\n\t[i] LINE: {lineno}, {line.strip()}\n\t[i] OBJECT: {exc_obj}{Fore.RESET}")
+    # ==============================================#
+    # Purpose: Given a int permission bitmask,      #
+    # translate it into an ASCII SERVICE_TYPE       #
+    #                                               #
+    # Return: String - Contains SERVICE_TYPE string #
+    # ==============================================#
+    def __access_from_int(self, num):
 
+        rights = ""
 
-  # ==============================================#
-  # Purpose: Given a int permission bitmask,      #
-  # translate it into an ASCII SERVICE_TYPE       #
-  #                                               #
-  # Return: String - Contains SERVICE_TYPE string #
-  # ==============================================#
-  def __access_from_int(self, num):
+        for spec in self.__windows_objects.SERVICE_TYPE.items():
+            if num & spec[0]:
+                rights += spec[1] + " "
 
-      rights = ""
-      
-      for spec in self.__windows_objects.SERVICE_TYPE.items():
-          if num & spec[0]:
-              rights += spec[1] + " "
-
-      return rights
+        return rights

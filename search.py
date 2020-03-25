@@ -70,10 +70,6 @@ def print_exception():
 if __name__ == "__main__":
     try:
         
-        l = low_fruit.low_haning_fruit(".")
-        l.analyze_scheduled_tasks()
-        exit(0)
-
         parser = argparse.ArgumentParser()
         me = parser.add_mutually_exclusive_group()
         me.add_argument(
@@ -136,10 +132,12 @@ if __name__ == "__main__":
             print(f"[!] {args.o} does not exist")
             exit(1)
 
-        # Class Objects:
-        a = analyze.analyze(args.o)
+       
 
         if (args.p != None):
+
+            a = analyze.analyze(args.o, True)
+
             # Check to make sure Procmon File is CSV:
             with open(args.p, "r") as f:
                 if not csv.Sniffer().has_header(f.read(2014)):
@@ -162,6 +160,7 @@ if __name__ == "__main__":
             print(f"\t+ {args.o}errors.txt:\t\tDetails of all errors observed")
 
         if (args.acl != None):
+            a = analyze.analyze(args.o, True)
             interesting_items = a.analyze_acls_from_file(args.acl)
             print("-" * 125)
             print(f"[i] {interesting_items} Were found to have Write or FullContol Permissions.")
@@ -183,13 +182,40 @@ if __name__ == "__main__":
 
         if (args.fruit):
             low = low_fruit.low_haning_fruit(args.o)
-            service_vulns = low.analyze_all_services()
+            
+            # Analyze System Services
+            service_analysis = low.analyze_all_services()
+            vulnerable_services = service_analysis["vuln_services"]
+
+            # Analyze Scheduled Tasks
+            tasks_analysis = low.analyze_scheduled_tasks()
+            vulnerable_tasks = tasks_analysis["vuln_tasks"]
+
+            # Analyze all files for credentials
+            credential_analysis = low.look_for_credentials()
+
             print("-" * 125)
             print(f"[i] Windows Services:")
-            print(f"\t+ {service_vulns['vuln_perms']} Services have suspect/vulnerable ACL's.")
-            print(f"\t+ {service_vulns['vuln_conf']} Services can have their binpath changed by a standard user.")
-            print(f"\t+ {service_vulns['vuln_unquote']} Services have unquoted service paths (Hijack Execution Flow)")
+            print(f"\t+ Total Numer of Windows Services: {service_analysis['total_services']}")
+            print(f"\t+ {service_analysis['vuln_perms']} Services have suspect/vulnerable ACL's.")
+            print(f"\t+ {service_analysis['vuln_conf']} Services can have their binpath changed by a standard user.")
+            print(f"\t+ {service_analysis['vuln_unquote']} Services have unquoted service paths (Hijack Execution Flow)")
             print(f"\t+ {args.o}services_enumeration.txt: All Services and enumerated objects")
+            if (len(vulnerable_services) != 0):
+                print(f"\t+ All Vulnerable Services: {vulnerable_services}")
+
+            print(f"\n[i] Windows Scheduled Tasks:")
+            print(f"\t+ Total Number of Scheduled Tasks: {tasks_analysis['total_tasks']}")
+            print(f"\t+ {tasks_analysis['vuln_perms']} Services have suspect/vulnerable ACL's.")
+            print(f"\t+ {args.o}scheduled_tasks_enumeration.txt: All analyzed scheduled tasks")
+            if (len(vulnerable_services) != 0):
+                print(f"\t+ All Vulnerable Tasks: {vulnerable_tasks}")
+            
+            print(f"\n[i] Credential Analysis:")
+            print(f"\t+ {credential_analysis['total_cred_files']} Files found to possibly contain Passwords/Credentials")
+            print(f"\t+ {args.o}credential_enumeration.txt: Contains Filepaths and Possible Credentials.")
+
+
         exit(0)
 
 

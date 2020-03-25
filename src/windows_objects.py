@@ -4,12 +4,13 @@ import win32security
 import win32api
 from enum import Enum
 
-#---------------------------------------------------#
-# Name:     Windows Objects Class                   #
-# Purpose:  Contains permission bitmasks / sets     #
-# Author:   @jfaust0                                #
-# Website:  sevrosecurity.com                       #
-#---------------------------------------------------#
+#-----------------------------------------------------#
+# Name:     Windows Objects Class                     #
+# Purpose:  Contains permission bitmasks / sets       #
+# Author:   @jfaust0                                  #
+# Website:  sevrosecurity.com                         #
+# API: http://timgolden.me.uk/pywin32-docs/win32.html #
+#-----------------------------------------------------#
   
 class windows_security_enums(Enum):
   FullControl               =   ctypes.c_uint32(0x1f01ff)
@@ -73,13 +74,6 @@ class windows_services_and_tasks():
     3 : 'Ready',
     4 : 'Running'
     }
-
-  ENV_PATH_VARS = {
-    "systemroot"    : os.environ.get("SystemRoot"),
-    "windir"        : os.environ.get("windir"),
-    "programfiles"  : os.environ.get("ProgramFiles"),
-  }
-  
 
 # When enumerating C:\Windows objects, this class mitigates BS redirects. 
 # For more information about SysWow64 and System32 redirects see the link below:
