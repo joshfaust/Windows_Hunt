@@ -164,7 +164,7 @@ class low_haning_fruit:
         """
         # Enumeration of the COM Object via powershell:
             --> $o = [activator]::CreateInstance([type]::GetTypeFromProgID('Schedule.Service'))
-            --> $o.Connect | Get-Member
+            --> $o.Connect() | Get-Member
             --> $f = $o.GetFolder("")
             --> $t = $f.GetTasks(0)
             --> $t | Get-Member
@@ -296,7 +296,7 @@ Task State:{" "*6}{task_state}
 Last Run:{" "*8}{last_run}
 Next Run:{" "*8}{next_run}
 ACLS:{acls}
-Suspect Perms:{" "*3}{"suspect_task"}
+Suspect Perms:{" "*3}{suspect_task}
           """
                     out_file.write(data)
                     pbar.update(1)
