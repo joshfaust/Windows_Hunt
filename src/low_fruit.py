@@ -22,6 +22,7 @@ init()
 # --------------------------------------------------#
 
 
+
 class low_haning_fruit:
 
     def __init__(self, o_dir):
@@ -35,7 +36,13 @@ class low_haning_fruit:
         self.__key_handle = None
         self.__sub_key_handle = None
 
-
+    # ======================================================#
+    # Purpose: Reviews registry keys that have been known   #
+    # to hold credentials and or misconfigurations that can #
+    # be utalized to elevate privileges or laterally move   #
+    #                                                       #
+    # Return: dict                                          #
+    # ======================================================#
     def registry_analysis(self):
         try:
             df = pd.DataFrame(columns=["Root_Key_Name", "Root_Key_Values", "Sub_Keys", "Sub_Key_Values", "ACLS"])
@@ -148,7 +155,10 @@ class low_haning_fruit:
                 
             CloseKey(self.__sub_key_handle)
 
-            return {"dataframe": df, }
+            return {
+                "name": "Registry Key Analysis", 
+                "dataframe": df
+                }
 
         except Exception as e:
             self.__print_exception()
@@ -165,11 +175,11 @@ class low_haning_fruit:
     def look_for_credentials(self):
         try:
             # Output File
-            out_file = open(f"{self.__output_dir}/credential_enumeration.txt", "a+")
+            df = pd.DataFrame(columns=["File_Path","Possible_Credentials"])
 
             # Function Variables
             found_cred_files = 0            # counter of files that have credentials/passwords within. (dictated by regex)
-            found_known_cred_files = []     # Holds all found files that match with known_cred_files[]
+            found_creds = ""
             interesting_file_paths = []     # Holds all interesting files the deem further analysis
 
             interesting_file_types = [
@@ -180,20 +190,9 @@ class low_haning_fruit:
                 ".inf",
                 ".txt"
                 ]
-            known_cred_files = [
-                "sysprep.inf",
-                "sysprep.xml",
-                "unattended.xml",
-                "unattend.xml",
-                "services.xml",
-                "scheduledtasks.xml",
-                "printers.xml",
-                "drives.xml",
-                "datasources.xml",
-                "groups.xml"
-                ]
             exclusion_list = [
-                "credential_enumeration.txt"
+                "credential_enumeration.txt",
+                "test.xlsx"
                 ]
 
             # We need to disable the file system redirects before enumerating any 
@@ -203,52 +202,18 @@ class low_haning_fruit:
                 for root, dirs, files in os.walk("C:\\"):
                     for file in files:
                         if (file.endswith(tuple(interesting_file_types)) 
-                        and file.lower() not in known_cred_files
                         and file.lower() not in exclusion_list):
 
                             full_path = os.path.join(root, file)
                             interesting_file_paths.append(full_path)
                         
-                        if (file.lower() in known_cred_files
-                        and file.lower() not in exclusion_list):
 
-                            full_path = os.path.join(root, file)
-                            found_known_cred_files.append(full_path)
-
-
-            # Analyze the found_known_cred_files list 
-            pbar = tqdm(total=len(found_known_cred_files))
-            pbar.set_description("Analyzing Known Credential Files")
-            for file_path in found_known_cred_files:
-                added = False
-                try:
-                    # For each line in a singular file, check it against the regex
-                    # to determine if passwords/credentials present.
-                    for i, line in enumerate(open(file_path, encoding="utf-8")):
-                        creds = re.search(self.__password_regex, line)
-                        if (creds != None):
-
-                            if (not added):
-                                out_file.write(f"FILE:{' ' * 4}{file_path}\n")
-                                added = True
-                                found_cred_files += 1
-
-                            out_file.write(f"CREDS:{' ' * 3}{str(creds.group())[0:100]}\n")
-
-                except Exception as e:
-                    pass
-
-                if (added):
-                    out_file.write("-"*100 + "\n")
-
-                pbar.update(1)
-            pbar.close()
-            
             # Analyze files that met the interesting file type criteria
             pbar = tqdm(total=len(interesting_file_paths))
             pbar.set_description("Analyzing Possible Credential Files")
+
             for file_path in interesting_file_paths:
-                added = False
+                add = False
                 try:
                     # For each line in a singular file, check it against the regex
                     # to determine if passwords/credentials present.
@@ -256,23 +221,28 @@ class low_haning_fruit:
                         creds = re.search(self.__password_regex, line)
                         if (creds != None):
 
-                            if (not added):
-                                out_file.write(f"FILE:{' ' * 4}{file_path}\n")
-                                added = True
-                                found_cred_files += 1
+                            found_creds += (f"{str(creds.group())[0:100]}\n")
+                            add = True
 
-                            out_file.write(f"CREDS:{' ' * 3}{str(creds.group())[0:100]}\n")
+                    # Add the data to the dataframe. 
+                    if (add):
+                        interim_data = {"File_Path": file_path, "Possible_Credentials": found_creds}
+                        df = df.append(interim_data, ignore_index=True)
+
+                    # Clean the creds for the next interation. 
+                    found_creds = ""
 
                 except Exception as e:
                     pass
                 
-                if (added):
-                    out_file.write("-"*100 + "\n")
-
                 pbar.update(1)
             pbar.close()
-
-            return {"total_cred_files": found_cred_files}
+            
+            return {
+                "name":"File Credential Analysis",
+                "dataframe": df, 
+                "total_cred_files": found_cred_files
+                }
 
         except Exception as e:
             self.__print_exception()
@@ -315,7 +285,7 @@ class low_haning_fruit:
 
         try:
             # Function Variables / Objects
-            out_file = open(f"{self.__output_dir}/scheduled_tasks_enumeration.txt", "a+")
+            df = pd.DataFrame(columns=["Task Name","Task Command", "Command Args", "Task Path", "Task State", "Last Run Date", "Next Run Date", "ACLS", "Vulnerable Permissions"])
             total_tasks = 0
             vuln_perms = 0
             acl_list = []
@@ -394,15 +364,10 @@ class low_haning_fruit:
 
                         for i, acl in enumerate(acl_list):
 
-                            if i == 0:
-                                spacing = " " * 12
-                            else:
-                                spacing = " " * 17
-
                             if i == (len(acl_list) - 1):
-                                acls += f"{spacing}{acl}"
+                                acls += acl
                             else:
-                                acls += f"{spacing}{acl}\n"
+                                acls += f"{acl}\n"
 
                     # Analyze the Commands ACL values for access rights issues / vulns.
                     suspect_task = an.analyze_acls_from_list(acl_list)
@@ -411,21 +376,30 @@ class low_haning_fruit:
                         if (task_name not in vuln_tasks):
                             vuln_tasks.append(task_name)
 
-                    data = f"""
-Task Name:{" "*7}{task_name}
-Task Command:{" "*4}{task_command}
-Command Args:{" "*4}{task_args}
-Task Path:{" "*7}{task_path}
-Task State:{" "*6}{task_state}
-Last Run:{" "*8}{last_run}
-Next Run:{" "*8}{next_run}
-ACLS:{acls}
-Suspect Perms:{" "*3}{suspect_task}
-          """
-                    out_file.write(data)
+                    last_run = last_run.strftime('%d/%m/%y %I:%M %S %p')
+                    try:
+                        next_run = next_run.strftime('%d/%m/%y %I:%M %S %p')
+                    except:
+                        next_run = None
+
+  
+                    data = {
+                        "Task Name":task_name,
+                        "Task Command":task_command,
+                        "Command Args":task_args,
+                        "Task Path":task_path,
+                        "Task State":task_state,
+                        "Last Run Date":last_run,
+                        "Next Run Date":next_run,
+                        "ACLS":acls,
+                        "Vulnerable Permissions":suspect_task
+                        }
+                    df = df.append(data, ignore_index=True)
                     pbar.update(1)
 
             return {
+                "name": "Scheduled Task Analysis",
+                "dataframe": df,
                 "total_tasks": total_tasks,
                 "vuln_tasks": vuln_tasks,
                 "vuln_perms": vuln_perms
@@ -433,6 +407,7 @@ Suspect Perms:{" "*3}{suspect_task}
 
         except Exception as e:
             self.__print_exception()
+            exit(0)
 
 
     # ====================================================#
@@ -451,7 +426,8 @@ Suspect Perms:{" "*3}{suspect_task}
             fp = filepaths.filepath_enumeration(self.__output_dir, False)
             an = analyze.analyze(self.__output_dir, False)
 
-            out_file = open(f"{self.__output_dir}/services_enumeration.txt", "a+")
+
+            df = pd.DataFrame(columns=["Short Name","Long Name", "Service Type", "Start Type", "Dependencies", "Full Command", "Bin Path", "ACLS", "Vulnerable Permissions", "Can Edit Binpath", "Is Unquoted Path"])
             total_services = 0  # Total Number of services
             vuln_perms = 0  # Total number of services that have suspect/vulnerable permissions (ACLS)
             vuln_conf = 0  # Total number of services where we can change the binpath as a standard user.
@@ -519,15 +495,10 @@ Suspect Perms:{" "*3}{suspect_task}
                 acl_list = fp.get_acl_list_return(service_bin_path)
                 for i, acl in enumerate(acl_list):
 
-                    if i == 0:
-                        spacing = " " * 11
-                    else:
-                        spacing = " " * 16
-
                     if i == (len(acl_list) - 1):
-                        acls += f"{spacing}{acl}"
+                        acls += acl
                     else:
-                        acls += f"{spacing}{acl}\n"
+                        acls += f"{acl}\n"
 
                 # Check for bad ACL permissions:
                 suspect_service = an.analyze_acls_from_list(acl_list)
@@ -559,24 +530,27 @@ Suspect Perms:{" "*3}{suspect_task}
                         vuln_services.append(service_short_name)
 
                 # Write the final data to a file.
-                data = f"""
-Short Name:{" "*5}{service_short_name}
-Long Name:{" "*6}{service_long_name}
-Service Type:{" "*3}{config[0]} {service_type}
-Start Type:{" "*5}{service_start_type}
-Dependencies:{" "*3}{service_dependencies}
-Full Command:{" "*3}{cleaned_bin_path}
-Bin Path:{" "*7}{service_bin_path}
-ACLS:{acls}
-Suspect Perms:{" "*2}{suspect_service}
-Change Binpath: {conf_check}
-Unquoted Path:{" "*2}{unquote_check}
-        """
 
-                out_file.write(data)
+                data = {
+                    "Short Name":service_short_name,
+                    "Long Name":service_long_name,
+                    "Service Type":f"{config[0]} {service_type}",
+                    "Start Type":service_start_type,
+                    "Dependencies":service_dependencies,
+                    "Full Command":cleaned_bin_path,
+                    "Bin Path":service_bin_path,
+                    "ACLS":acls,
+                    "Vulnerable Permissions":suspect_service,
+                    "Can Edit Binpath":conf_check,
+                    "Is Unquoted Path":unquote_check
+                }
+
+                df = df.append(data, ignore_index=True)
                 pbar.update(1)
 
             return {
+                "name": "Service Analysis",
+                "dataframe": df,
                 "total_services": total_services,
                 "vuln_perms": vuln_perms,
                 "vuln_conf": vuln_conf,
