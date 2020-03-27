@@ -2,13 +2,16 @@ import re
 import os
 import sys
 import getpass
+import datetime
 import linecache
 import win32service
 import win32com.client
-from bs4 import BeautifulSoup
+import pandas as pd
+from winreg import *
 from tqdm import tqdm
-from . import windows_objects, filepaths, analyze
+from bs4 import BeautifulSoup
 from colorama import Fore, init
+from . import windows_objects, filepaths, analyze, registry
 init()
 
 # --------------------------------------------------#
@@ -20,6 +23,7 @@ init()
 
 
 class low_haning_fruit:
+
     def __init__(self, o_dir):
         self.name = "Low Hangning Fruit"
         self.__output_dir = o_dir
@@ -27,7 +31,127 @@ class low_haning_fruit:
         self.__windows_file_path = re.compile(r"^([A-Za-z]):\\((?:[A-Za-z\d][A-Za-z\d\- \x27_\(\)~]{0,61}\\?)*[A-Za-z\d][A-Za-z\d\- \x27_\(\)]{0,61})(\.[A-Za-z\d]{1,6})?")
         self.__password_regex = re.compile(r"(?i)(adminpassword|password|pass|login|creds)( |)(=|:).*")
         self.__username = str(getpass.getuser()).lower()
+        self.__reg_handle = None
+        self.__key_handle = None
+        self.__sub_key_handle = None
 
+
+    def registry_analysis(self):
+        try:
+            df = pd.DataFrame(columns=["Root_Key_Name", "Root_Key_Values", "Sub_Keys", "Sub_Key_Values", "ACLS"])
+            r = registry.registry_enumeration(self.__output_dir, False)
+            
+            registry_keys = [
+                "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\Currentversion\Winlogon",
+                "HKCU\\Software\\ORL\\WinVNC3\\Password",
+                "HKCU\\Software\\SimonTatham\\PuTTY\\Sessions",
+                "HKLM\\SYSTEM\\Current\\ControlSet\\Services\\SNMP",
+                "HKLM\\Software\\RealVNC\\WinVNC4",
+                "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Installer\\AlwaysInstallElevated",
+                "HKCU\\SOFTWARE\\Policies\\Microsoft\\Windows\\Installer\\AlwaysInstallElevated"
+                ]
+            wanted_key_names = [
+                "defaultusername",
+                "defaultdomainname",
+                "defaultpassword",
+                "password",
+                "pass",
+                "credentials",
+                "user",
+                "username",
+                "privatekeyfile",
+                "hostname",
+                "shell"
+                ]
+            
+            pbar = tqdm(total=len(registry_keys))
+            pbar.set_description("Analyzing Registry Keys")
+            for root_key in registry_keys:
+
+                sub_key_names = []
+                tmp_value_holder = []   # Hold all the interesting keys in a single dict
+                root_key_values = {}
+                sub_key_values = {}
+                key_exists = False
+
+                # Open a handle to the correct registry path
+                if ("hkcu" in root_key.lower()):
+                    key = root_key.split("HKCU\\")[1]
+                    self.__reg_handle = ConnectRegistry(None, HKEY_CURRENT_USER)
+
+                elif ("hklm" in root_key.lower()):
+                    key = root_key.split("HKLM\\")[1]
+                    self.__reg_handle = ConnectRegistry(None, HKEY_LOCAL_MACHINE)
+                
+                try:
+                    # Open a key:
+                    self.__key_handle = OpenKey(self.__reg_handle, key)
+                    key_exists = True
+                except:
+                    pbar.update(1)
+                    continue
+                
+                # Obtain information about the root key:
+                total_sub_keys, total_key_values, last_modified_date = QueryInfoKey(self.__key_handle)
+                last_modified_date = self.__ldap_to_datetime(last_modified_date)
+                
+                # Enumerate root key values:
+                if (total_key_values != 0):
+                    for i in range(total_key_values):
+                        kv = EnumValue(self.__key_handle, i)
+                        value_name = list(kv)[0]
+
+                        if (value_name.lower() in wanted_key_names):        # Only add keys that match our wanted_key_names[]
+                            root_key_values[value_name] = kv
+
+                # Enumerate sub_key names:
+                if (total_sub_keys != 0):
+                    for i in range(total_sub_keys):
+                        sub_key_name = EnumKey(self.__key_handle, i)
+                        sub_key_names.append(sub_key_name)
+
+                # Enumerate sub_key_values:
+                if (len(sub_key_names) != 0):
+                    # For each sub_key, open a handle:
+                    for _sub_key_name in sub_key_names:
+                        self.__sub_key_handle = OpenKey(self.__key_handle, _sub_key_name)
+                        _total_sub_keys, _total_key_values, _last_modified_date = QueryInfoKey(self.__sub_key_handle)
+                        
+                        if (_total_key_values != 0):
+
+                            for j in range(_total_key_values):
+                                _kv = EnumValue(self.__sub_key_handle, j)   # Key Value
+                                _value_name = list(_kv)[0]                  # Value Name
+
+                                if (_value_name.lower() in wanted_key_names):
+                                    tmp_value_holder.append(_kv)
+
+                        sub_key_values[_sub_key_name] = tmp_value_holder    # add a dict object to another dict object (dict inception?)
+                        tmp_value_holder = []                               # Clear out the value holder array for the next interation. 
+                        CloseKey(self.__sub_key_handle)                     # Close the sub_key handle
+
+                if (key_exists):
+                    final_data = {
+                        "Root_Key_Name": root_key.strip(),
+                        "Root_Key_Values": root_key_values, 
+                        "Sub_Keys": sub_key_names,
+                        "Sub_Key_Values": sub_key_values,
+                        "ACLS": r.get_acl_list_return(root_key)
+                        }
+
+                    df = df.append(final_data, ignore_index=True)
+
+                # Cleanup
+                CloseKey(self.__key_handle)
+                CloseKey(self.__reg_handle)
+                pbar.update(1)
+                
+            CloseKey(self.__sub_key_handle)
+
+            return {"dataframe": df, }
+
+        except Exception as e:
+            self.__print_exception()
 
 
     # ======================================================#
@@ -494,3 +618,13 @@ Unquoted Path:{" "*2}{unquote_check}
                 rights += spec[1] + " "
 
         return rights
+
+    # ==============================================#
+    # Purpose: Given a LDAP timestamp, convert it   #
+    # to datetime object.                           #
+    #                                               #
+    # Return: datetime object                       #
+    # ==============================================#
+    def __ldap_to_datetime(self,ts: float):
+        fixed = datetime.datetime(1601, 1, 1) + datetime.timedelta(seconds=ts/10000000)
+        return fixed

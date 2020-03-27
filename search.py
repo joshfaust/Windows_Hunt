@@ -182,7 +182,7 @@ if __name__ == "__main__":
 
         if (args.fruit):
             low = low_fruit.low_haning_fruit(args.o)
-            
+            '''
             # Analyze System Services
             service_analysis = low.analyze_all_services()
             vulnerable_services = service_analysis["vuln_services"]
@@ -214,7 +214,8 @@ if __name__ == "__main__":
             print(f"\n[i] Credential Analysis:")
             print(f"\t+ {credential_analysis['total_cred_files']} Files found to possibly contain Passwords/Credentials")
             print(f"\t+ {args.o}credential_enumeration.txt: Contains Filepaths and Possible Credentials.")
-
+            '''
+            low.registry_analysis()
 
         exit(0)
 

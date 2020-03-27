@@ -25,7 +25,7 @@ init()
 class analyze:
 
     # o_dir = output directory
-    # initialize = do you want to initialize all write objects?
+    # initialize = do you want to initialize all write objects
     def __init__(self, o_dir, initialize):
         self.name = "Analysis"
         self.__output_dir = o_dir

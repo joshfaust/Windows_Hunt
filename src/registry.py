@@ -141,6 +141,85 @@ Access: {acls}
                 self.__print_exception()
                 exit(0)
 
+
+
+    # ===============================================#
+    # Purpose: Obtains ACL values for a single       #
+    # Registry path / key                            #
+    # Return: String                                 #
+    # ===============================================#
+    def get_acl_list_return(self, root_key):
+        try:
+
+            r_path = root_key.lower()
+            all_permissions = ""
+
+            if ("hklm" in r_path):
+                path = r_path.split("hklm\\")[1]
+                key = win32api.RegOpenKey(
+                    con.HKEY_LOCAL_MACHINE,
+                    path,
+                    0,
+                    con.KEY_ENUMERATE_SUB_KEYS | con.KEY_QUERY_VALUE | con.KEY_READ,
+                )
+
+            else:
+                path = r_path.split("hkcu\\")[1]
+                key = win32api.RegOpenKey(
+                    con.HKEY_CURRENT_USER,
+                    path,
+                    0,
+                    con.KEY_ENUMERATE_SUB_KEYS | con.KEY_QUERY_VALUE | con.KEY_READ,
+                )
+
+
+            sd = win32api.RegGetKeySecurity(
+                key,
+                win32security.DACL_SECURITY_INFORMATION
+                | win32security.OWNER_SECURITY_INFORMATION,
+            )
+
+            dacl = sd.GetSecurityDescriptorDacl()
+            owner_sid = sd.GetSecurityDescriptorOwner()
+
+            sddl_string = win32security.ConvertSecurityDescriptorToStringSecurityDescriptor(
+                sd,
+                win32security.SDDL_REVISION_1,
+                win32security.DACL_SECURITY_INFORMATION,
+            )
+            all_permissions = dict(self.sddl_dacl_parse(sddl_string))
+
+            keys = all_permissions.keys()
+            acls = ""
+            for key in keys:
+                acls += f"{key}: {all_permissions[key]}\n"
+       
+            return acls
+
+        except Exception as e:
+            error = str(e).lower()
+            if (
+                "find the path specified" in error
+                or "find the file specified" in error
+                or "access is denied" in error
+                or "ace type 9" in error
+            ):
+                data = f"\nPath: {r_path}\n{str(e)}\n"
+                return data
+
+            elif "no mapping" in error:
+                note = """Possibly VULNERABLE: No mapping between account names and SID's
+        Account used to set GPO may have been removed
+        Account name may be typed incorrectly
+        INFO: https://www.rebeladmin.com/2016/01/how-to-fix-error-no-mapping-between-account-names-and-security-ids-in-active-directory/"""
+                data = f"\nPath: {r_path}\n{note}\n"
+                return data
+
+            else:
+                self.__write_error(r_path + "\n" + all_permissions)
+                self.__print_exception()
+                exit(0)
+
     # ===============================================#
     # Purpose: Given an SDDL DACL String, parse it  #
     # and analyze the overall permission set for    #
