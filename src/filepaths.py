@@ -1,5 +1,6 @@
 import sys
 import os
+import io
 import glob
 import ctypes
 import time
@@ -34,8 +35,8 @@ class filepath_enumeration:
             win32security.ACCESS_DENIED_ACE_TYPE: "DENY",
         }        
         if (initialize):
-            self.__acl_out_file = open(f"{self.__output_dir}/raw_acls.txt", "a+")
-            self.__error_out_file = open(f"{self.__output_dir}/errors.txt", "a+")
+            self.__acl_out_file = io.open(f"{self.__output_dir}/raw_acls.txt", "a+", encoding="utf8")
+            self.__error_out_file = io.open(f"{self.__output_dir}/errors.txt", "a+", encoding="utf8")
 
     # ==============================================#
     # Purpose: Writes ACL values for a single file  #
@@ -64,11 +65,9 @@ class filepath_enumeration:
             if "|" in f_path:
                 f_path = f_path.split("|")[0]
 
-            if ("hklm" in f_path and "c:" in f_path):
-                f_path = "C:/" + f_path.split("c:")[1]
+            if ("hklm" in f_path.lower() and "c:" in f_path.lower()):
+                f_path = "C:/" + f_path.lower().split("c:")[1]
 
-            elif ("hklm" in f_path and "C:" in f_path):
-                f_path = "C:/" + f_path.split("C:")[1]
 
             acls = ""
             gfso = win32security.GetFileSecurity(

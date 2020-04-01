@@ -103,10 +103,8 @@ if __name__ == "__main__":
             print(f"[!] {args.o} does not exist")
             exit(1)
 
-       
 
         if (args.p != None):
-
             a = analyze.analyze(args.o, True)
 
             # Check to make sure Procmon File is CSV:
@@ -200,9 +198,6 @@ if __name__ == "__main__":
                 print(f"\t+ All Vulnerable Tasks: {vulnerable_tasks}")
             
             print(f"\n[i] Credential Analysis:")
-            print(f"\t+ {credential_analysis['total_cred_files']} Files found to possibly contain Passwords/Credentials")
-
-            print(f"\n[i] Registry Analysis:")
             print(f"\t+ {credential_analysis['total_cred_files']} Files found to possibly contain Passwords/Credentials")
 
             print(f"[i] Final Report: {args.o}/Priv_Esc_Analysis.xlsx")

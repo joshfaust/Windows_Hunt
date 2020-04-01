@@ -1,6 +1,7 @@
-import sys
 import os
 import re
+import io
+import sys
 import time
 import getpass
 import threading
@@ -56,9 +57,13 @@ class analyze:
                 "regenumvalue",
                 "regquerykeysecurity",
                 "regquerykey",
-            ]  # Operations we don't care about
+            ] 
+            # Objects we don't really care about (at this time)
+            bad_key_types = [
+                "hkcr"
+            ]
 
-            cleaned_data_file = open(f"{self.__output_dir}/cleaned_paths.csv", "w")  # Save the cleanup output to a file.
+            cleaned_data_file = io.open(f"{self.__output_dir}/cleaned_paths.csv", "w", encoding="utf8")  # Save the cleanup output to a file.
             cleaned_data_file.write("Process Name,Original Path,Clean Path,Operation,Integrity\n")
 
             # DataFrame Objects
@@ -72,19 +77,25 @@ class analyze:
             path = ""
 
             for i in range(0, dataframe_length):
-
+                
                 # Pull in dataframe content we're interested in.
                 orig_path = str(data["Path"][i]).lower()
                 proc_name = str(data["Process Name"][i]).lower()
                 operation = str(data["Operation"][i]).lower()
                 integrity = str(data["Integrity"][i]).lower()
 
+                # Bool value to dictate add or not
+                ## False = There are not matches against the bad_key_types, go ahead and add
+                ## True = There are matches against the bad_key_types, do not add
+                do_not_add = [ele for ele in bad_key_types if(ele in orig_path)] 
+
                 if (
                     proc_name not in bad_process_names
                     and operation not in bad_operation_names
+                    and not do_not_add
                 ):
 
-                    if (".exe" not in orig_path and ".dll" not in orig_path):
+                    if (".exe" not in orig_path and ".dll" not in orig_path and "c:" not in orig_path):
                         # Cleanup Registry Key Path
                         dir_count = len(re.findall(r"\\", orig_path))
                         path = orig_path.split("\\")
@@ -97,9 +108,11 @@ class analyze:
                                 clean_path += path[j] + ":\\"
                             else:
                                 clean_path += path[j] + "\\"
+
                     else:
-                        # Send the .DLL/.EXE to be analyzed.
+                        # Send non-registry object to file
                         clean_path = orig_path
+
                         # Avoid issues with rundll32.exe
                         if ("rundll32.exe c:" in path):
                           clean_path = clean_path.split("rundll32.exe ")[1]
@@ -107,17 +120,17 @@ class analyze:
                         # Avoid Issues with CLI arguments:
                         if (".exe -" in clean_path):
                             clean_path = clean_path.split(" -")[0]
-                            
+
                         base_path = os.path.dirname(clean_path)
 
                     # Make sure this is not a duplicate key before saving
-                    if clean_path not in previous_paths:
+                    if clean_path not in previous_paths and len(clean_path) > 4:
                         # Save key to cleaned keys
                         final_data = f"\"{proc_name}\",\"{orig_path}\",\"{clean_path}\",\"{operation}\",\"{integrity}\""
                         cleaned_data_file.write(final_data + "\n")
                         previous_paths.add(clean_path)
 
-                    if ((".exe" in clean_path.lower() or ".dll" in clean_path.lower()) and base_path not in previous_paths):
+                    if ((".exe" in clean_path.lower() or ".dll" in clean_path.lower()) and base_path not in previous_paths and len(clean_path) > 4):
                         final_data = f"\"{proc_name}\",\"{orig_path}\",\"{base_path}\",\"{operation}\",\"{integrity}\""
                         cleaned_data_file.write(final_data + "\n")
                         previous_paths.add(base_path)
@@ -265,7 +278,7 @@ class analyze:
                 for i in range(tot_commands):
 
                     # Analyze registry keys
-                    if "hklm:" in str(commands[i]).lower():
+                    if "hklm:" in str(commands[i]).lower() or "hkcu:" in str(commands[i]).lower():
                         t = threading.Thread(
                             target=self.__reg_enum.get_acl_list_procmon, args=(commands[i],)
                         )

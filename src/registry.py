@@ -1,6 +1,7 @@
 import sys
 import os
 import re
+import io
 import ctypes
 import time
 import threading
@@ -49,8 +50,8 @@ class registry_enumeration:
             win32security.ACCESS_DENIED_ACE_TYPE: "DENY",
         }
         if (initialize):
-            self.__acl_out_file = open(f"{self.__output_dir}/raw_acls.txt", "a+")
-            self.__error_out_file = open(f"{self.__output_dir}/errors.txt", "a+")
+            self.__acl_out_file = io.open(f"{self.__output_dir}/raw_acls.txt", "a+", encoding="utf8")
+            self.__error_out_file = io.open(f"{self.__output_dir}/errors.txt", "a+", encoding="utf8")
 
     # ===============================================#
     # Purpose: Obtains ACL values for a single      #
@@ -73,10 +74,19 @@ class registry_enumeration:
             path_dict = dict(path_dict)
             r_path = path_dict["clean_cmd"]
 
-            try:
-                path = r_path.split(":\\")[1]
-            except:
-                path = r_path.split("hklm\\")[1]
+            # Support of HKLM Keys
+            if "hklm" in r_path:
+                try:
+                    path = r_path.split(":\\")[1]
+                except:
+                    path = r_path.split("hklm\\")[1]
+
+            # Support for HKCU Keys
+            if "hkcu" in r_path:
+                try:
+                    path = r_path.split(":\\")[1]
+                except:
+                    path = r_path.split("hkcu\\")[1]
 
             key = win32api.RegOpenKey(
                 con.HKEY_LOCAL_MACHINE,
@@ -137,6 +147,7 @@ Access: {acls}
                 self.__write_acl(data)
                 pass
             else:
+                print(r_path)
                 self.__write_error(r_path + "\n" + all_permissions)
                 self.__print_exception()
                 exit(0)
