@@ -1,6 +1,7 @@
-import sys
 import os
 import re
+import io
+import sys
 import time
 import getpass
 import threading
@@ -14,30 +15,33 @@ from colorama import Fore, init
 
 init()
 
-# ---------------------------------------------------#
+# --------------------------------------------------#
 # Name:     Analysis Class                          #
 # Purpose:  Conduct the overall DACL analysis       #
 # Author:   @jfaust0                                #
 # Website:  sevrosecurity.com                       #
-# ---------------------------------------------------#
+# --------------------------------------------------#
 
 
 class analyze:
-    def __init__(self, o_dir):
+
+    # o_dir = output directory
+    # initialize = do you want to initialize all write objects
+    def __init__(self, o_dir, initialize):
         self.name = "Analysis"
         self.__output_dir = o_dir
         self.__final_report = f"{self.__output_dir}/evil.xlsx"
-        self.__reg_enum = registry.registry_enumeration(self.__output_dir)
-        self.__file_enum = filepaths.filepath_enumeration(self.__output_dir)
+        self.__reg_enum = registry.registry_enumeration(self.__output_dir, initialize)
+        self.__file_enum = filepaths.filepath_enumeration(self.__output_dir, initialize)
         self.__username = str(getpass.getuser()).lower()
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: loads raw procmon csv output into a  #
     # Pandas dataframe, removed duplicates, and     #
     # outputs all cleaned / de-duplicated objects   #
     # to cleaned_paths.txt                          #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     def parse_procmon_csv(self, p_file):
         try:
             # Names we do not want to enumerate
@@ -53,9 +57,13 @@ class analyze:
                 "regenumvalue",
                 "regquerykeysecurity",
                 "regquerykey",
-            ]  # Operations we don't care about
+            ] 
+            # Objects we don't really care about (at this time)
+            bad_key_types = [
+                "hkcr"
+            ]
 
-            cleaned_data_file = open(f"{self.__output_dir}/cleaned_paths.csv", "w")  # Save the cleanup output to a file.
+            cleaned_data_file = io.open(f"{self.__output_dir}/cleaned_paths.csv", "w", encoding="utf8")  # Save the cleanup output to a file.
             cleaned_data_file.write("Process Name,Original Path,Clean Path,Operation,Integrity\n")
 
             # DataFrame Objects
@@ -69,19 +77,25 @@ class analyze:
             path = ""
 
             for i in range(0, dataframe_length):
-
+                
                 # Pull in dataframe content we're interested in.
                 orig_path = str(data["Path"][i]).lower()
                 proc_name = str(data["Process Name"][i]).lower()
                 operation = str(data["Operation"][i]).lower()
                 integrity = str(data["Integrity"][i]).lower()
 
+                # Bool value to dictate add or not
+                ## False = There are not matches against the bad_key_types, go ahead and add
+                ## True = There are matches against the bad_key_types, do not add
+                do_not_add = [ele for ele in bad_key_types if(ele in orig_path)] 
+
                 if (
                     proc_name not in bad_process_names
                     and operation not in bad_operation_names
+                    and not do_not_add
                 ):
 
-                    if (".exe" not in orig_path and ".dll" not in orig_path):
+                    if (".exe" not in orig_path and ".dll" not in orig_path and "c:" not in orig_path):
                         # Cleanup Registry Key Path
                         dir_count = len(re.findall(r"\\", orig_path))
                         path = orig_path.split("\\")
@@ -94,9 +108,11 @@ class analyze:
                                 clean_path += path[j] + ":\\"
                             else:
                                 clean_path += path[j] + "\\"
+
                     else:
-                        # Send the .DLL/.EXE to be analyzed.
+                        # Send non-registry object to file
                         clean_path = orig_path
+
                         # Avoid issues with rundll32.exe
                         if ("rundll32.exe c:" in path):
                           clean_path = clean_path.split("rundll32.exe ")[1]
@@ -104,17 +120,17 @@ class analyze:
                         # Avoid Issues with CLI arguments:
                         if (".exe -" in clean_path):
                             clean_path = clean_path.split(" -")[0]
-                            
+
                         base_path = os.path.dirname(clean_path)
 
                     # Make sure this is not a duplicate key before saving
-                    if clean_path not in previous_paths:
+                    if clean_path not in previous_paths and len(clean_path) > 4:
                         # Save key to cleaned keys
                         final_data = f"\"{proc_name}\",\"{orig_path}\",\"{clean_path}\",\"{operation}\",\"{integrity}\""
                         cleaned_data_file.write(final_data + "\n")
                         previous_paths.add(clean_path)
 
-                    if ((".exe" in clean_path.lower() or ".dll" in clean_path.lower()) and base_path not in previous_paths):
+                    if ((".exe" in clean_path.lower() or ".dll" in clean_path.lower()) and base_path not in previous_paths and len(clean_path) > 4):
                         final_data = f"\"{proc_name}\",\"{orig_path}\",\"{base_path}\",\"{operation}\",\"{integrity}\""
                         cleaned_data_file.write(final_data + "\n")
                         previous_paths.add(base_path)
@@ -130,10 +146,10 @@ class analyze:
         except Exception as e:
             self.__print_exception()
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Thread the win32api DACL lookups     #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     ## build_command_list --> __thread_commands --> __get_acl_list --> __write_acl
     def build_command_list_procmon(self, total_threads):
         try:
@@ -194,10 +210,10 @@ class analyze:
 
 
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Thread the win32api DACL lookups     #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     ## build_command_list --> __thread_commands --> __get_acl_list --> __write_acl
     def build_command_list_path(self, total_threads, path):
         try:
@@ -249,10 +265,10 @@ class analyze:
         except Exception as e:
             self.__print_exception()
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Thread the win32api DACL lookups     #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     def __thread_commands(self, commands, analysis_type):
         try:
             threads = []
@@ -262,7 +278,7 @@ class analyze:
                 for i in range(tot_commands):
 
                     # Analyze registry keys
-                    if "hklm:" in str(commands[i]).lower():
+                    if "hklm:" in str(commands[i]).lower() or "hkcu:" in str(commands[i]).lower():
                         t = threading.Thread(
                             target=self.__reg_enum.get_acl_list_procmon, args=(commands[i],)
                         )
@@ -303,27 +319,31 @@ class analyze:
         except Exception as e:
             self.__print_exception()
 
-    # ===============================================#
+    # ==============================================#
     # Purpose:Check for suspect permission sets     #
     # Return: Boolean                               #
     #   - True: Found suspect Permission            #
     #   - False: benign                             #
-    # ===============================================#
+    # ==============================================#
     def __check_permission(self, line):
         try:
-
+            line = line.lower()
             tmp = False
             users = [self.__username, "users", "everyone", "interactive", "authenticated"]
             permissions = [
                 "fullcontrol",
                 "write",
+                "write_dac",
+                "generic_write",
+                "key_write",
+                "write_owner",
+                "service_change_config"
                 "changepermissions",
                 "takeownership",
                 "traverse",
-                "key_write",
-                "generic_write",
                 "key_all_access",
-                "file_all_access",
+                "file_all_access"
+                "all_access",
                 "file_generic_write",
                 "generic_all"
             ]
@@ -342,12 +362,12 @@ class analyze:
         except Exception as e:
             self.__print_exception()
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: analyzes the filepaths or registry   #
     # class looking for abusable permissions        #
     #                                               #
     # Return: int - # of suspect permissions        #
-    # ===============================================#
+    # ==============================================#
     def analyze_acls(self):
         try:
             df = pd.DataFrame(columns=["Process_Name", "Integrity", "Operation", "Accessed Object", "ACLs"])
@@ -444,13 +464,13 @@ class analyze:
         except Exception as e:
             self.__print_exception()
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Given a file of DACLs, this function #
     # analyzes the filepaths or registry class      #
     # looking for abusable permissions              #
     #                                               #
     # Return: int - # of suspect permissions        #
-    # ===============================================#
+    # ==============================================#
     def analyze_acls_from_file(self, file):
         try:
             df = pd.DataFrame(columns=["Process_Name", "Integrity", "Operation", "Accessed Object", "ACLs"])
@@ -546,6 +566,31 @@ class analyze:
         except Exception as e:
             self.__print_exception()
 
+
+    # ==============================================#
+    # Purpose: Given a list of ACL's, enumerate if  #
+    # we have control over the object via a         # 
+    # low-priv account                              #
+    #                                               #
+    # Return: Boolean                               #
+    # ==============================================#
+    def analyze_acls_from_list(self, acl_list):
+        try:
+            add = False  # Placeholder to determine if user has full permissions
+
+            for line in acl_list:
+                line = line.lower()
+
+                user_full_control = self.__check_permission(line)
+                if user_full_control:
+                    add = True
+
+            return add
+
+        except Exception as e:
+            self.__print_exception()
+
+
     # ===============================================#
     # Purpose: Clean Exception Printing              #
     # Return: None                                   #
@@ -558,6 +603,7 @@ class analyze:
         linecache.checkcache(filename)
         line = linecache.getline(filename, lineno, tmp_file.f_globals)
         print(f"{Fore.RED}EXCEPTION IN: {Fore.GREEN}{filename}\n\t[i] LINE: {lineno}, {line.strip()}\n\t[i] OBJECT: {exc_obj}{Fore.RESET}")
+
 
     # ===============================================#
     # Purpose: return Total amount of errors seen    #

@@ -3,9 +3,11 @@ import sys
 import csv
 import argparse
 import linecache
-from src import analyze
+import pandas as pd
+from src import analyze, low_fruit
 from colorama import Fore, init
 init()
+
 
 # ---------------------------------------------------#
 # Windows Process Information:                      #
@@ -19,36 +21,6 @@ init()
 # Author: @Jfaust0                                  #
 # Site: SevroSecurity.com                           #
 # ---------------------------------------------------#
-
-
-"""
-+---------------------------------------------------------------+
-| python3 search.py -p <procmon_data.csv> -o <output_dir> -t 23 |
-+---------------------------+-----------------------------------+
-                            |
-        +-------------------v---------------------+       +--------------------------------+
-        |Parse Procmon: analyze.parse_procmon_csv |       |   filepaths.get_acl_list()     |
-        |Output:        cleaned_paths.txt         |   +--->              or                |
-        +-------------------+---------------------+   |   |    registry.get_acl_list()     |
-                            |                         |   +---------------+----------------+
-        +-------------------v---------------------+   |                   |
-        | Analyze Paths/Keys in cleaned_paths.txt |   |   +---------------v----------------+
-        +-------------------+---------------------+   |   |  filepaths.__write_to_file()   |
-                            |                         |   |              or                |
-        +-------------------v---------------------+   |   |   registry.__write_to_file()   |
-        |       analyze.build_command_list()      |   |   |                                |
-        +-------------------+---------------------+   |   |Output:  raw_acls.txt           |
-                            |                         |   +----------------+---------------+
-        +-------------------v---------------------+   |                    |
-        |       analyze.__thread_commands()       +---+                    |
-        +-----------------------------------------+                        |
-                                                                           |
-        +-----------------------------------------+                        |
-        |         analyze.analyze_acls()          +<-----------------------+
-        |Output: evil.xlsx                        |
-        +-----------------------------------------+
-
-"""
 
 
 def print_exception():
@@ -68,7 +40,7 @@ def print_exception():
 # =======================================#
 if __name__ == "__main__":
     try:
-
+        
         parser = argparse.ArgumentParser()
         me = parser.add_mutually_exclusive_group()
         me.add_argument(
@@ -96,7 +68,15 @@ if __name__ == "__main__":
             default=None,
             metavar='',
             required=False,
-            help="Analyze all files (Recursive) within a given path"
+            help="Analyze all files (Recursive) given a path"
+        )
+        me.add_argument(
+            "-F",
+            "--fruit",
+            action="store_true",
+            dest="fruit",
+            required=False,
+            help="Run a full analysis (Low Hanging Fruit)"
         )
         parser.add_argument(
             "-t",
@@ -123,10 +103,10 @@ if __name__ == "__main__":
             print(f"[!] {args.o} does not exist")
             exit(1)
 
-        # Class Objects:
-        a = analyze.analyze(args.o)
 
-        if args.p != None:
+        if (args.p != None):
+            a = analyze.analyze(args.o, True)
+
             # Check to make sure Procmon File is CSV:
             with open(args.p, "r") as f:
                 if not csv.Sniffer().has_header(f.read(2014)):
@@ -148,7 +128,8 @@ if __name__ == "__main__":
             print(f"\t+ {args.o}evil.xlsx:\t\tKeys denoted as improperly configured/interesting")
             print(f"\t+ {args.o}errors.txt:\t\tDetails of all errors observed")
 
-        if args.acl != None:
+        if (args.acl != None):
+            a = analyze.analyze(args.o, True)
             interesting_items = a.analyze_acls_from_file(args.acl)
             print("-" * 125)
             print(f"[i] {interesting_items} Were found to have Write or FullContol Permissions.")
@@ -168,7 +149,64 @@ if __name__ == "__main__":
             print(f"\t+ {args.o}evil.xlsx:\t\tKeys denoted as improperly configured/interesting")
             print(f"\t+ {args.o}errors.txt:\t\tDetails of all errors observed")
 
+        if (args.fruit):
+            low = low_fruit.low_haning_fruit(args.o)
+            
+            # Analyze System Services
+            service_analysis = low.analyze_all_services()
+            services_tab_name = service_analysis["name"]
+            services_report = service_analysis["dataframe"]
+            vulnerable_services = service_analysis["vuln_services"]
+
+            # Analyze Scheduled Tasks
+            tasks_analysis = low.analyze_scheduled_tasks()
+            tasks_tab_name = tasks_analysis["name"]
+            tasks_report = tasks_analysis["dataframe"]
+            vulnerable_tasks = tasks_analysis["vuln_tasks"]
+
+            # Analyze Registry Keys:
+            registry_analysis = low.registry_analysis()
+            registry_tab_name = registry_analysis["name"]
+            registry_report = registry_analysis["dataframe"]
+
+            # Analyze all files for credentials
+            credential_analysis = low.look_for_credentials()
+            credential_tab_name = credential_analysis["name"]
+            credential_report = credential_analysis["dataframe"]
+
+
+            # Write Final Report:
+            with pd.ExcelWriter(f"{args.o}/Priv_Esc_Analysis.xlsx") as writer:
+                services_report.to_excel(writer, sheet_name=services_tab_name)
+                tasks_report.to_excel(writer, sheet_name=tasks_tab_name)
+                registry_report.to_excel(writer, sheet_name=registry_tab_name)
+                credential_report.to_excel(writer, sheet_name=credential_tab_name)
+
+            print("-" * 125)
+            print(f"[i] Windows Services:")
+            print(f"\t+ Total Numer of Windows Services: {service_analysis['total_services']}")
+            print(f"\t+ {service_analysis['vuln_perms']} Services have suspect/vulnerable ACL's.")
+            print(f"\t+ {service_analysis['vuln_conf']} Services can have their binpath changed by a standard user.")
+            print(f"\t+ {service_analysis['vuln_unquote']} Services have unquoted service paths (Hijack Execution Flow)")
+            if (len(vulnerable_services) != 0):
+                print(f"\t+ All Vulnerable Services: {vulnerable_services}")
+
+            print(f"\n[i] Windows Scheduled Tasks:")
+            print(f"\t+ Total Number of Scheduled Tasks: {tasks_analysis['total_tasks']}")
+            print(f"\t+ {tasks_analysis['vuln_perms']} Services have suspect/vulnerable ACL's.")
+            if (len(vulnerable_services) != 0):
+                print(f"\t+ All Vulnerable Tasks: {vulnerable_tasks}")
+            
+            print(f"\n[i] Credential Analysis:")
+            print(f"\t+ {credential_analysis['total_cred_files']} Files found to possibly contain Passwords/Credentials")
+
+            print(f"[i] Final Report: {args.o}/Priv_Esc_Analysis.xlsx")
+            
+
+
+
         exit(0)
+
 
     except Exception as e:
         print_exception()

@@ -1,6 +1,7 @@
 import sys
 import os
 import re
+import io
 import ctypes
 import time
 import threading
@@ -24,7 +25,8 @@ init()
 
 
 class registry_enumeration:
-    def __init__(self, o_dir):
+    
+    def __init__(self, o_dir, initialize):
         self.name = "Registry Enumeration"
         self.error_index = 0
         self.re_valid_string = re.compile("^[ADO][ADLU]?\:\(.*\)$")
@@ -41,14 +43,15 @@ class registry_enumeration:
         self.TRUSTEE = self.SDDL_OBJECT.TRUSTEE
         self.ACCESS_HEX = self.SDDL_OBJECT.ACCESS_HEX
         self.__output_dir = o_dir
-        self.__acl_out_file = open(f"{self.__output_dir}/raw_acls.txt", "a+")
-        self.__error_out_file = open(f"{self.__output_dir}/errors.txt", "a+")
         self.__mutex = threading.Lock()
         self.__error_mutex = threading.Lock()
         self.__CONVENTIONAL_ACES = {
             win32security.ACCESS_ALLOWED_ACE_TYPE: "ALLOW",
             win32security.ACCESS_DENIED_ACE_TYPE: "DENY",
         }
+        if (initialize):
+            self.__acl_out_file = io.open(f"{self.__output_dir}/raw_acls.txt", "a+", encoding="utf8")
+            self.__error_out_file = io.open(f"{self.__output_dir}/errors.txt", "a+", encoding="utf8")
 
     # ===============================================#
     # Purpose: Obtains ACL values for a single      #
@@ -71,10 +74,19 @@ class registry_enumeration:
             path_dict = dict(path_dict)
             r_path = path_dict["clean_cmd"]
 
-            try:
-                path = r_path.split(":\\")[1]
-            except:
-                path = r_path.split("hklm\\")[1]
+            # Support of HKLM Keys
+            if "hklm" in r_path:
+                try:
+                    path = r_path.split(":\\")[1]
+                except:
+                    path = r_path.split("hklm\\")[1]
+
+            # Support for HKCU Keys
+            if "hkcu" in r_path:
+                try:
+                    path = r_path.split(":\\")[1]
+                except:
+                    path = r_path.split("hkcu\\")[1]
 
             key = win32api.RegOpenKey(
                 con.HKEY_LOCAL_MACHINE,
@@ -134,6 +146,86 @@ Access: {acls}
                 data = f"\nPath: {r_path}\n{note}\n"
                 self.__write_acl(data)
                 pass
+            else:
+                print(r_path)
+                self.__write_error(r_path + "\n" + all_permissions)
+                self.__print_exception()
+                exit(0)
+
+
+
+    # ===============================================#
+    # Purpose: Obtains ACL values for a single       #
+    # Registry path / key                            #
+    # Return: String                                 #
+    # ===============================================#
+    def get_acl_list_return(self, root_key):
+        try:
+
+            r_path = root_key.lower()
+            all_permissions = ""
+
+            if ("hklm" in r_path):
+                path = r_path.split("hklm\\")[1]
+                key = win32api.RegOpenKey(
+                    con.HKEY_LOCAL_MACHINE,
+                    path,
+                    0,
+                    con.KEY_ENUMERATE_SUB_KEYS | con.KEY_QUERY_VALUE | con.KEY_READ,
+                )
+
+            else:
+                path = r_path.split("hkcu\\")[1]
+                key = win32api.RegOpenKey(
+                    con.HKEY_CURRENT_USER,
+                    path,
+                    0,
+                    con.KEY_ENUMERATE_SUB_KEYS | con.KEY_QUERY_VALUE | con.KEY_READ,
+                )
+
+
+            sd = win32api.RegGetKeySecurity(
+                key,
+                win32security.DACL_SECURITY_INFORMATION
+                | win32security.OWNER_SECURITY_INFORMATION,
+            )
+
+            dacl = sd.GetSecurityDescriptorDacl()
+            owner_sid = sd.GetSecurityDescriptorOwner()
+
+            sddl_string = win32security.ConvertSecurityDescriptorToStringSecurityDescriptor(
+                sd,
+                win32security.SDDL_REVISION_1,
+                win32security.DACL_SECURITY_INFORMATION,
+            )
+            all_permissions = dict(self.sddl_dacl_parse(sddl_string))
+
+            keys = all_permissions.keys()
+            acls = ""
+            for key in keys:
+                acls += f"{key}: {all_permissions[key]}\n"
+       
+            return acls
+
+        except Exception as e:
+            error = str(e).lower()
+            if (
+                "find the path specified" in error
+                or "find the file specified" in error
+                or "access is denied" in error
+                or "ace type 9" in error
+            ):
+                data = f"\nPath: {r_path}\n{str(e)}\n"
+                return data
+
+            elif "no mapping" in error:
+                note = """Possibly VULNERABLE: No mapping between account names and SID's
+        Account used to set GPO may have been removed
+        Account name may be typed incorrectly
+        INFO: https://www.rebeladmin.com/2016/01/how-to-fix-error-no-mapping-between-account-names-and-security-ids-in-active-directory/"""
+                data = f"\nPath: {r_path}\n{note}\n"
+                return data
+
             else:
                 self.__write_error(r_path + "\n" + all_permissions)
                 self.__print_exception()
@@ -256,10 +348,10 @@ Access: {acls}
 
         return rights
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Write to File Function for threads   #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     def __write_acl(self, data):
         try:
             # wait until the file is unlocked.
@@ -294,10 +386,10 @@ Access: {acls}
             exit(1)
 
 
-    # ===============================================#
+    # ==============================================#
     # Purpose: Clean Exception Printing             #
     # Return: None                                  #
-    # ===============================================#
+    # ==============================================#
     def __print_exception(self):
       self.error_index += 1
       exc_type, exc_obj, tb = sys.exc_info()

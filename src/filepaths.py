@@ -1,5 +1,6 @@
 import sys
 import os
+import io
 import glob
 import ctypes
 import time
@@ -23,21 +24,22 @@ init()
 
 
 class filepath_enumeration:
-    def __init__(self, o_dir):
+    def __init__(self, o_dir, initialize):
         self.name = "Filepath Enumeration"
         self.error_index = 0
         self.__output_dir = o_dir
         self.__mutex = threading.Lock()
         self.__error_mutex = threading.Lock()
-        self.__acl_out_file = open(f"{self.__output_dir}/raw_acls.txt", "a+")
-        self.__error_out_file = open(f"{self.__output_dir}/errors.txt", "a+")
         self.__CONVENTIONAL_ACES = {
             win32security.ACCESS_ALLOWED_ACE_TYPE: "ALLOW",
             win32security.ACCESS_DENIED_ACE_TYPE: "DENY",
-        }
+        }        
+        if (initialize):
+            self.__acl_out_file = io.open(f"{self.__output_dir}/raw_acls.txt", "a+", encoding="utf8")
+            self.__error_out_file = io.open(f"{self.__output_dir}/errors.txt", "a+", encoding="utf8")
 
     # ==============================================#
-    # Purpose: Obtains ACL values for a single file #
+    # Purpose: Writes ACL values for a single file  #
     # or filepath given a dict object that contains #
     # Procmon.exe attributes/data                   #
     # Return: None                                  #
@@ -63,11 +65,9 @@ class filepath_enumeration:
             if "|" in f_path:
                 f_path = f_path.split("|")[0]
 
-            if ("hklm" in f_path and "c:" in f_path):
-                f_path = "C:/" + f_path.split("c:")[1]
+            if ("hklm" in f_path.lower() and "c:" in f_path.lower()):
+                f_path = "C:/" + f_path.lower().split("c:")[1]
 
-            elif ("hklm" in f_path and "C:" in f_path):
-                f_path = "C:/" + f_path.split("C:")[1]
 
             acls = ""
             gfso = win32security.GetFileSecurity(
@@ -146,7 +146,7 @@ Access: {acls}
                 exit(0)
 
     # ==============================================#
-    # Purpose: Obtains ACL values for all files     #
+    # Purpose: Writes ACL values for all files      #
     # (recursive directory search) given a path     #
     # Return: None                                  #
     # ==============================================#
@@ -222,6 +222,82 @@ Access: {acls}
                 self.__print_exception()
                 exit(0)
 
+
+    # ==============================================#
+    # Purpose: Returns ACL values for all files     #
+    # (recursive directory search) given a path     #
+    # Return: List of ACLs                          #
+    # ==============================================#
+    def get_acl_list_return(self, f_path):
+
+        try:
+            with windows_objects.disable_file_system_redirection():
+                acls = []
+                gfso = win32security.GetFileSecurity(
+                    f_path, win32security.DACL_SECURITY_INFORMATION
+                )
+                dacl = gfso.GetSecurityDescriptorDacl()
+
+                for n_ace in range(dacl.GetAceCount()):
+
+                    ace = dacl.GetAce(n_ace)
+                    (ace_type, ace_flags) = ace[0]
+
+                    mask = 0  # Reset the bitmask for each interation
+                    domain = ""  # Reset the domain for each interation
+                    name = ""  # Reset the name for each interation
+                    ascii_mask = ""  # Reset the ascii permission value for each interation
+
+                    if ace_type in self.__CONVENTIONAL_ACES:
+                        mask, sid = ace[1:]
+                    else:
+                        mask, object_type, inherited_object_type, sid = ace[1:]
+
+                    name, domain, type = win32security.LookupAccountSid(None, sid)
+
+                    # Enumerate windows_security_enums
+                    for enum_obj in windows_objects.windows_security_enums:
+                        if ctypes.c_uint32(mask).value == enum_obj.value.value:
+                            access = self.__CONVENTIONAL_ACES.get(ace_type, "OTHER")
+                            ascii_mask = enum_obj.name
+                            acls.append(f"{domain}\\{name} {access} {ascii_mask}")
+
+                    # Enumerate nt_security_permissions
+                    for enum_obj in windows_objects.nt_security_enums:
+                        if ctypes.c_uint32(mask).value == enum_obj.value.value:
+                            access = self.__CONVENTIONAL_ACES.get(ace_type, "OTHER")
+                            ascii_mask = enum_obj.name
+                            acls.append(f"{domain}\\{name} {access} {ascii_mask}")
+
+                return acls
+
+        except Exception as e:
+            error = str(e).lower()
+            if (
+                "find the path specified" in error
+                or "find the file specified" in error
+                or "access is denied" in error
+                or "ace type 9" in error
+                or "nonetype" in error
+            ):
+                acls.append(str(e))
+                pass
+                return acls
+
+            elif "no mapping" in error:
+                note = """Possibly VULNERABLE: No mapping between account names and SID's
+        Account used to set GPO may have been removed
+        Account name may be typed incorrectly
+        INFO: https://www.rebeladmin.com/2016/01/how-to-fix-error-no-mapping-between-account-names-and-security-ids-in-active-directory/"""
+
+                acls.append(str(e))
+                pass
+                return acls
+
+            else:
+                self.__write_error(f_path)
+                self.__print_exception()
+                exit(0)
 
     # ==============================================#
     # Purpose: Write to File Function for threads   #
