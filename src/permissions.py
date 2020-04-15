@@ -459,7 +459,8 @@ class permissions:
                 or "find the file specified" in error
                 or "access is denied" in error
                 or "ace type 9" in error
-                or "nonetype" in error):
+                or "nonetype" in error
+                or "trust relationship" in error):
 
                 error_dict = {
                     "path_name": f_path,
