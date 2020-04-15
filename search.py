@@ -4,7 +4,7 @@ import csv
 import argparse
 import linecache
 import pandas as pd
-from src import analyze, low_fruit
+from src import analyze, low_fruit, permissions
 from colorama import Fore, init
 init()
 
@@ -35,12 +35,74 @@ def print_exception():
     )
 
 
+def testing():
+    '''
+    cmd = {
+    "proc_name" : proc_name, 
+    "orig_cmd"  : orig_cmd, 
+    "clean_cmd" : clean_cmd,
+    "operation" : operation,
+    "integrity" : integrity
+    }
+    '''
+    all = []
+    p  = permissions.permissions(".")
+    paths = [
+        "c:\\windows\\microsoft.net\\framework64\\v4.0.30319\\clr.dll",
+        "hklm\\software\\microsoft\\windows\\currentversion\\explorer\\desktop\\namespace",
+        "hklm\\software\\policies\\binary fortress software\\displayfusion",
+        "hklm\\software\\binary fortress software\\displayfusion",
+        "hklm\\software\\microsoft\\windows\\currentversion\\explorer\\usersfiles\\namespace",
+        "hklm\\software\\microsoft\\windows\\currentversion\\explorer\\allowedenumeration",
+        "hklm\\software\\microsoft\\windows nt\\currentversion\\terminal server",
+        "hklm\\software\\microsoft\\windows nt\\currentversion\\profilelist\\s-1-5-21-2842599707-1896506431-2237290089-1001\\fdeploy",
+        "hklm\\software\\microsoft\\windows\\currentversion\\explorer\\folderdescriptions\\{c4900540-2379-4c75-844b-64e6faf8716b}",
+        "c:\\users\\joshua\\appdata\\local\\temp\\procmon64.exe",
+        "hklm\\software\\microsoft\\windows\\currentversion\\explorer\\mycomputer\\namespace",
+        "hklm\\software\\microsoft\\windows\\currentversion\\explorer\\usersfiles\\namespace\\delegatefolders"
+            ]
+
+    for i, path in enumerate(paths):
+        cmd = {
+            "proc_name" : "a", 
+            "orig_cmd"  : "b", 
+            "clean_cmd" : path,
+            "operation" : "c",
+            "integrity" : "d"
+            } 
+
+        if ("hklm" in path):
+            data = p.get_registry_key_acl_procmon(cmd)
+            all.append(data)
+        else:
+            data = p.get_file_path_acl_procmon(cmd)
+            all.append(data)
+
+    i = 0
+    for line in all:
+        individual_record = dict(line)
+        # We know that the error length is 3
+        if (len(individual_record) > 3):
+            perms = individual_record["acls"]
+            perms = perms.split("\n")
+            for line in perms:
+                print(f"{i}--{line}")
+                i+=1
+
+
+        
+
+
+
 # =======================================#
 # MAIN                                  #
 # =======================================#
 if __name__ == "__main__":
     try:
         
+        #testing()
+        #exit(0)
+
         parser = argparse.ArgumentParser()
         me = parser.add_mutually_exclusive_group()
         me.add_argument(
@@ -51,15 +113,6 @@ if __name__ == "__main__":
             metavar="",
             required=False,
             help="Path to the Procmon Output File (CSV)",
-        )
-        me.add_argument(
-            "-a",
-            "--acl",
-            dest="acl",
-            default=None,
-            metavar="",
-            required=False,
-            help="Analyze a singular acls.txt file",
         )
         me.add_argument(
             "-f",
@@ -82,7 +135,7 @@ if __name__ == "__main__":
             "-t",
             "--threads",
             metavar="",
-            dest="threads",
+            dest="t",
             type=int,
             default=10,
             required=False,
@@ -105,7 +158,6 @@ if __name__ == "__main__":
 
 
         if (args.p != None):
-            a = analyze.analyze(args.o, True)
 
             # Check to make sure Procmon File is CSV:
             with open(args.p, "r") as f:
@@ -114,9 +166,10 @@ if __name__ == "__main__":
                     exit(1)
 
             # Start the Enumeration.
-            a.parse_procmon_csv(args.p)  # Analyze the Procmon CSV File and pull out paths
-            total_analyzed = a.build_command_list_procmon(args.threads)  # Send paths to aggregateCommands with totla Thread Count
-            interesting_items = a.analyze_acls()  # Analyze all the ACLs in raw_acls.txt
+            a = analyze.analyze(args.o)                                         # Analysis Class Object
+            parsed_df = a.parse_procmon_csv(args.p)                             # parse the Procmon CSV (Return: Pandas DataFrame)
+            total_analyzed = a.build_command_list_procmon(args.t, parsed_df)    # Pull all ACLs for paths (threaded)
+            interesting_items = a.analyze_acls_procmon()                        # Analyze all the enumerate ACLS.
             
             print("-" * 125)
             print(f"\n[i] A total of {total_analyzed} objects Were Analyzed.")
@@ -128,17 +181,11 @@ if __name__ == "__main__":
             print(f"\t+ {args.o}evil.xlsx:\t\tKeys denoted as improperly configured/interesting")
             print(f"\t+ {args.o}errors.txt:\t\tDetails of all errors observed")
 
-        if (args.acl != None):
-            a = analyze.analyze(args.o, True)
-            interesting_items = a.analyze_acls_from_file(args.acl)
-            print("-" * 125)
-            print(f"[i] {interesting_items} Were found to have Write or FullContol Permissions.")
-            print("[i] Output Files:")
-            print(f"\t+ {args.o}data.xlsx:\t\tKeys denoted as improperly configured/interesting")
 
         if (args.analysis_path != None):
+            a = analyze.analyze(args.o)                                         # Analysis Class Object
             total_analyzed = a.build_command_list_path(args.threads, args.analysis_path)
-            interesting_items = a.analyze_acls()
+            interesting_items = a.analyze_acls_procmon("path")
 
             print("-" * 125)
             print(f"\n[i] A total of {total_analyzed} objects Were Analyzed.")
@@ -148,6 +195,7 @@ if __name__ == "__main__":
             print(f"\t+ {args.o}raw_acls.txt:\t\tRaw output of Access Control Listings")
             print(f"\t+ {args.o}evil.xlsx:\t\tKeys denoted as improperly configured/interesting")
             print(f"\t+ {args.o}errors.txt:\t\tDetails of all errors observed")
+
 
         if (args.fruit):
             low = low_fruit.low_haning_fruit(args.o)
@@ -202,11 +250,7 @@ if __name__ == "__main__":
 
             print(f"[i] Final Report: {args.o}/Priv_Esc_Analysis.xlsx")
             
-
-
-
         exit(0)
-
 
     except Exception as e:
         print_exception()

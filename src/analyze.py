@@ -4,12 +4,12 @@ import io
 import sys
 import time
 import getpass
+import hashlib
 import threading
 import linecache
 import pandas as pd
-from . import filepaths
-from . import registry
-from . import windows_objects
+import concurrent.futures
+from . import permissions, windows_objects
 from tqdm import tqdm
 from colorama import Fore, init
 
@@ -27,21 +27,22 @@ class analyze:
 
     # o_dir = output directory
     # initialize = do you want to initialize all write objects
-    def __init__(self, o_dir, initialize):
+    def __init__(self, o_dir):
         self.name = "Analysis"
+        self.__procmon_analysis = []        # A list of dictionaries
+        self.__path_analysis = []
         self.__output_dir = o_dir
         self.__final_report = f"{self.__output_dir}/evil.xlsx"
-        self.__reg_enum = registry.registry_enumeration(self.__output_dir, initialize)
-        self.__file_enum = filepaths.filepath_enumeration(self.__output_dir, initialize)
+        self.__permission_enum = permissions.permissions(self.__output_dir)
         self.__username = str(getpass.getuser()).lower()
 
-    # ==============================================#
-    # Purpose: loads raw procmon csv output into a  #
-    # Pandas dataframe, removed duplicates, and     #
-    # outputs all cleaned / de-duplicated objects   #
-    # to cleaned_paths.txt                          #
-    # Return: None                                  #
-    # ==============================================#
+    # ==========================================================#
+    # Purpose:  loads raw procmon csv output into a Pandas      #
+    #           dataframe, removed duplicates, and outputs all  #
+    #           cleaned / de-duplicated objects to              #
+    #           cleaned_paths.txt                               #
+    # Return:   Pandas Dataframe                                #
+    # ==========================================================#
     def parse_procmon_csv(self, p_file):
         try:
             # Names we do not want to enumerate
@@ -49,6 +50,7 @@ class analyze:
                 "conhost.exe",
                 "dem.exe",
                 "svchost.exe",
+                "procmon64.exe"
             ]  
             # Operations we don't care about
             bad_operation_names = [
@@ -58,43 +60,29 @@ class analyze:
                 "regquerykeysecurity",
                 "regquerykey",
             ] 
-            # Objects we don't really care about (at this time)
-            bad_key_types = [
-                "hkcr"
-            ]
 
-            cleaned_data_file = io.open(f"{self.__output_dir}/cleaned_paths.csv", "w", encoding="utf8")  # Save the cleanup output to a file.
-            cleaned_data_file.write("Process Name,Original Path,Clean Path,Operation,Integrity\n")
+            # Dataframe to hold the parsed procmon data:
+            output_dataframe = pd.DataFrame(columns=["process_name", "orig_path", "clean_path", "operation", "integrity"])
 
-            # DataFrame Objects
-            data = pd.read_csv(p_file)
-            headers = list(data)
-            dataframe_length = data.shape[0]
-
-            pbar = tqdm(total=dataframe_length)
+            input_dataframe = pd.read_csv(p_file)       # Read Procmon.CSV data into dataframe
+            dataframe_length = input_dataframe.shape[0] # Size of procmon dataframe
+            deduplication = (set())                     # holds hashes of previously added paths to avoid duplication
+            path = ""                                   # placeholder for original paths (not cleaned)
+            pbar = tqdm(total=dataframe_length)         # Progress Bar
             pbar.set_description("Analyzing Procmon Data")
-            previous_paths = (set())  
-            path = ""
 
             for i in range(0, dataframe_length):
                 
                 # Pull in dataframe content we're interested in.
-                orig_path = str(data["Path"][i]).lower()
-                proc_name = str(data["Process Name"][i]).lower()
-                operation = str(data["Operation"][i]).lower()
-                integrity = str(data["Integrity"][i]).lower()
+                orig_path = str(input_dataframe["Path"][i]).lower()
+                proc_name = str(input_dataframe["Process Name"][i]).lower()
+                operation = str(input_dataframe["Operation"][i]).lower()
+                integrity = str(input_dataframe["Integrity"][i]).lower()
 
-                # Bool value to dictate add or not
-                ## False = There are not matches against the bad_key_types, go ahead and add
-                ## True = There are matches against the bad_key_types, do not add
-                do_not_add = [ele for ele in bad_key_types if(ele in orig_path)] 
+                if (proc_name not in bad_process_names
+                    and operation not in bad_operation_names):
 
-                if (
-                    proc_name not in bad_process_names
-                    and operation not in bad_operation_names
-                    and not do_not_add
-                ):
-
+                    # If path is a registry key:
                     if (".exe" not in orig_path and ".dll" not in orig_path and "c:" not in orig_path):
                         # Cleanup Registry Key Path
                         dir_count = len(re.findall(r"\\", orig_path))
@@ -109,8 +97,8 @@ class analyze:
                             else:
                                 clean_path += path[j] + "\\"
 
+                    # If path is an executable or library:
                     else:
-                        # Send non-registry object to file
                         clean_path = orig_path
 
                         # Avoid issues with rundll32.exe
@@ -123,17 +111,33 @@ class analyze:
 
                         base_path = os.path.dirname(clean_path)
 
-                    # Make sure this is not a duplicate key before saving
-                    if clean_path not in previous_paths and len(clean_path) > 4:
-                        # Save key to cleaned keys
-                        final_data = f"\"{proc_name}\",\"{orig_path}\",\"{clean_path}\",\"{operation}\",\"{integrity}\""
-                        cleaned_data_file.write(final_data + "\n")
-                        previous_paths.add(clean_path)
+                    clean_hash = hashlib.md5(clean_path.encode("utf-8")).hexdigest()    # MD5 of the Cleaned Path
+                    base_hash = hashlib.md5(base_path.encode("utf-8")).hexdigest()      # MD5 of the Base Path
 
-                    if ((".exe" in clean_path.lower() or ".dll" in clean_path.lower()) and base_path not in previous_paths and len(clean_path) > 4):
-                        final_data = f"\"{proc_name}\",\"{orig_path}\",\"{base_path}\",\"{operation}\",\"{integrity}\""
-                        cleaned_data_file.write(final_data + "\n")
-                        previous_paths.add(base_path)
+                    # Make sure this is not a duplicate key before saving
+                    if clean_hash not in deduplication and len(clean_path) > 4:
+                        # Save the Cleaned path (Full Path) to the dataframe
+                        final_data = {
+                            "process_name": proc_name, 
+                            "orig_path": orig_path, 
+                            "clean_path": clean_path, 
+                            "operation": operation,
+                            "integrity": integrity
+                            }
+                        output_dataframe = output_dataframe.append(final_data, ignore_index=True)
+                        deduplication.add(clean_hash)
+
+                    # Save the Base Path (no file included) to the dataframe
+                    if ((".exe" in clean_path.lower() or ".dll" in clean_path.lower()) and base_hash not in deduplication and len(clean_path) > 4):
+                        final_data = {
+                            "process_name": proc_name, 
+                            "orig_path": orig_path, 
+                            "clean_path": base_hash, 
+                            "operation": operation,
+                            "integrity": integrity
+                            }
+                        output_dataframe = output_dataframe.append(final_data, ignore_index=True)
+                        deduplication.add(base_hash)
 
                     pbar.update(1)
 
@@ -141,22 +145,20 @@ class analyze:
                     pbar.update(1)
 
             pbar.close()
-            cleaned_data_file.close()
+            return output_dataframe
 
         except Exception as e:
             self.__print_exception()
 
-    # ==============================================#
-    # Purpose: Thread the win32api DACL lookups     #
-    # Return: None                                  #
-    # ==============================================#
+    # ==========================================================#
+    # Purpose: Thread the win32api DACL lookups                 #
+    # Return: None                                              #
+    # ==========================================================#
     ## build_command_list --> __thread_commands --> __get_acl_list --> __write_acl
-    def build_command_list_procmon(self, total_threads):
+    def build_command_list_procmon(self, total_threads, df):
         try:
-             # DataFrame Objects
-            data = pd.read_csv(f"{self.__output_dir}/cleaned_paths.csv", encoding = "ISO-8859-1")
-            headers = list(data)
-            total_number_of_paths = data.shape[0]
+            # DataFrame Objects
+            total_number_of_paths = df.shape[0]
 
             commands = [None] * total_threads
             commands_index = 0
@@ -168,11 +170,11 @@ class analyze:
             for i in range(0, total_number_of_paths):
                 
                 #cleaned_data_file.write("Process Name,Original Path,Clean Path,Operation,Integrity")
-                proc_name = str(data["Process Name"][i]).lower()
-                orig_cmd = str(data["Original Path"][i]).lower()
-                clean_cmd = str(data["Clean Path"][i]).lower()
-                operation = str(data["Operation"][i]).lower()
-                integrity = str(data["Integrity"][i]).lower()
+                proc_name = str(df["process_name"][i]).lower()
+                orig_cmd = str(df["orig_path"][i]).lower()
+                clean_cmd = str(df["clean_path"][i]).lower()
+                operation = str(df["operation"][i]).lower()
+                integrity = str(df["integrity"][i]).lower()
 
                 # Generate a Dictionary that will be stored in a list (I know, it's messy...)
                 cmd = {
@@ -210,10 +212,10 @@ class analyze:
 
 
 
-    # ==============================================#
-    # Purpose: Thread the win32api DACL lookups     #
-    # Return: None                                  #
-    # ==============================================#
+    # ==========================================================#
+    # Purpose: Thread the win32api DACL lookups                 #
+    # Return: None                                              #
+    # ==========================================================#
     ## build_command_list --> __thread_commands --> __get_acl_list --> __write_acl
     def build_command_list_path(self, total_threads, path):
         try:
@@ -266,55 +268,41 @@ class analyze:
             self.__print_exception()
 
     # ==============================================#
-    # Purpose: Thread the win32api DACL lookups     #
-    # Return: None                                  #
+    # Purpose:  Thread the win32api DACL lookups    #
+    # Return:   Adds dictionaries to class list     #
     # ==============================================#
     def __thread_commands(self, commands, analysis_type):
         try:
             threads = []
             tot_commands = len(commands)
+            pool = tot_commands
 
             if (analysis_type == "procmon"):
-                for i in range(tot_commands):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=tot_commands) as executor:
+                    for i in range(tot_commands):
 
-                    # Analyze registry keys
-                    if "hklm:" in str(commands[i]).lower() or "hkcu:" in str(commands[i]).lower():
-                        t = threading.Thread(
-                            target=self.__reg_enum.get_acl_list_procmon, args=(commands[i],)
-                        )
-                        t.daemon = True
-                        t.start()
-                        threads.append(t)
-                        t.join()
-                    # Disregard NONE type objects
-                    elif commands[i] == None:
-                        pass
-                    # Analyze File Paths
-                    else:
-                        t = threading.Thread(
-                            target=self.__file_enum.get_acl_list_procmon, args=(commands[i],)
-                        )
-                        t.daemon = True
-                        t.start()
-                        threads.append(t)
-                        t.join()
-            
+                        # Analyze registry keys
+                        if "hklm:" in str(commands[i]).lower() or "hkcu:" in str(commands[i]).lower():
+                            t = executor.submit(self.__permission_enum.get_registry_key_acl_procmon, commands[i])
+                            self.__procmon_analysis.append(t.result())
+
+                        # Disregard NONE type objects
+                        elif commands[i] == None:
+                            pass
+
+                        # Analyze File Paths
+                        else:
+                            t = executor.submit(self.__permission_enum.get_file_path_acl_procmon, commands[i])
+                            self.__procmon_analysis.append(t.result())
+
             if (analysis_type == "path"):
-                for i in range(tot_commands):
-                    
-                    if (commands[i] == None):
-                        pass
-                    else:
-                        t = threading.Thread(
-                            target=self.__file_enum.get_acl_list_path, args=(commands[i],)
-                        )
-                        t.daemon = True
-                        t.start()
-                        threads.append(t)
-
-                        if (i == (tot_commands -1)):
-                            t.join()
-
+                with concurrent.futures.ThreadPoolExecutor(max_workers=tot_commands) as executor:
+                    for i in range(tot_commands):
+                        
+                        # Analyse File Paths
+                        if (commands[i] != None):
+                            t = executor.submit(self.__permission_enum.get_file_path_acl, commands[i])
+                            self.__path_analysis.append(t.result())
 
         except Exception as e:
             self.__print_exception()
@@ -368,202 +356,64 @@ class analyze:
     #                                               #
     # Return: int - # of suspect permissions        #
     # ==============================================#
-    def analyze_acls(self):
+    def analyze_acls_procmon(self):
         try:
+
+            # __procmon_analysis Dictionary Format:
+            '''
+            acl_dict = {
+                "process_name": path_dict["proc_name"],
+                "integrity": path_dict["integrity"],
+                "operation": path_dict["operation"],
+                "original_cmd": path_dict["orig_cmd"],
+                "path": r_path,
+                "acls": acls
+                }
+            '''
             df = pd.DataFrame(columns=["Process_Name", "Integrity", "Operation", "Accessed Object", "ACLs"])
-            num_lines = sum(1 for line in open(f"{self.__output_dir}/raw_acls.txt"))
+            pbar = tqdm(total=len(self.__procmon_analysis))
+            pbar.set_description("Looking for Evil")
+            add_index = 0
 
-            with open(f"{self.__output_dir}/raw_acls.txt", "r") as f:
+            for obj in self.__procmon_analysis:
+                add = False
+                acl_dict = dict(obj)
 
-                permission_index = 0  # Index of determining number of permissions between Access and Audit
-                total_index = 0  # Index of all frames we have built
-                fun_index = 0  # Index of Full_Control Registry Keys
-                add = False  # Placeholder to determine if user has full permissions
+                if (len(acl_dict) > 3):                         # Error Dicts and < 3, skip those
+                    proc_name = acl_dict["process_name"]        # Placeholder for process name
+                    integrity = acl_dict["integrity"]           # Placeholder for process integrity
+                    operation = acl_dict["operation"]           # Placeholder for operation type
+                    orig_cmd = acl_dict["original_cmd"]         # Placeholder for original command/path
+                    clean_cmd = acl_dict["path"]                # Placeholder for cleaned command/path
+                    access = acl_dict["acls"]                   # Placeholder for access control list
+                    
+                    parsed_access = access.split("\n")           # Split each individual ACL via newline
+                    for line in parsed_access:
+                        if (user_full_control := self.__check_permission(line)):
+                            add = user_full_control
+                            break;
 
-                proc_name = ""      # Placeholder for process name
-                integrity = ""      # Placeholder for process integrity
-                operation = ""      # Placeholder for operation type
-                orig_cmd = ""       # Placeholder for original command/path
-                clean_cmd = ""      # Placeholder for cleaned command/path
-                access = ""         # Placeholder for access control list
+                    if add:
+                        final_data = {
+                            "Process_Name": proc_name, 
+                            "Integrity": integrity,
+                            "Operation": operation,
+                            "Accessed Object": clean_cmd,
+                            "ACLs": access
+                            }
+                        df = df.append(final_data, ignore_index=True)
+                        add_index += 1
 
-                pbar = tqdm(total=num_lines)
-                pbar.set_description("Looking for Evil")
+                    add = False
+                    access = ""
+                pbar.update(1)
 
-                for line in f:
-                    line = line.lower()
-                    try:
-
-                        if "process_name" in line:
-                            proc_name = str(line.split(": ")[1]).strip()
-
-                        if "integrity" in line:
-                            integrity = str(line.split(": ")[1]).strip()
-
-                        if "operation" in line:
-                            operation = str(line.split(": ")[1]).strip()
-
-                        if "original_cmd" in line:
-                            orig_cmd = str(line.split(": ")[1]).strip()
-                        
-                        if "path" in line:
-                            clean_cmd = str(line.split(": ")[1]).strip()
-                        
-                        # Determine Access
-                        if (
-                            permission_index >= 1
-                            and "--------end--------" not in line
-                        ):
-                            access += "\n" + str(line).strip()
-                            permission_index += 1
-                            user_full_control = self.__check_permission(line)
-                            if user_full_control:
-                                add = True
-
-                        if (
-                            "access:" in line
-                        ):  # Check if we are at the ACCESS portion:
-                            access += line.split("access:")[1].strip()
-                            permission_index += 1  # Denote which permission we are at
-                            user_full_control = self.__check_permission(line)
-                            if user_full_control:
-                                add = True
-
-                        if "--------end--------" in line:
-
-                            if add:
-                                final_data = {
-                                    "Process_Name": proc_name, 
-                                    "Integrity": integrity,
-                                    "Operation": operation,
-                                    "Accessed Object": clean_cmd,
-                                    "ACLs": access
-                                    }
-                                df = df.append(final_data, ignore_index=True)
-                                fun_index += 1
-
-                            path = None
-                            owner = None
-                            group = None
-                            add = False
-                            permission_index = 0
-                            total_index += 1
-                            access = ""
-
-                        pbar.update(1)
-
-                    except Exception as e:
-                        pbar.update(1)
-                        pass
-
-                pbar.close()
-
+            pbar.close()
             df.to_excel(self.__final_report)
-            return fun_index
+            return add_index
 
         except Exception as e:
-            self.__print_exception()
-
-    # ==============================================#
-    # Purpose: Given a file of DACLs, this function #
-    # analyzes the filepaths or registry class      #
-    # looking for abusable permissions              #
-    #                                               #
-    # Return: int - # of suspect permissions        #
-    # ==============================================#
-    def analyze_acls_from_file(self, file):
-        try:
-            df = pd.DataFrame(columns=["Process_Name", "Integrity", "Operation", "Accessed Object", "ACLs"])
-            num_lines = sum(1 for line in open(file))
-
-            with open(file, "r") as f:
-
-                permission_index = 0  # Index of determining number of permissions between Access and Audit
-                total_index = 0  # Index of all frames we have built
-                fun_index = 0  # Index of Full_Control Registry Keys
-                add = False  # Placeholder to determine if user has full permissions
-
-                proc_name = ""      # Placeholder for process name
-                integrity = ""      # Placeholder for process integrity
-                operation = ""      # Placeholder for operation type
-                orig_cmd = ""       # Placeholder for original command/path
-                clean_cmd = ""      # Placeholder for cleaned command/path
-                access = ""         # Placeholder for access control list
-
-                pbar = tqdm(total=num_lines)
-                pbar.set_description("Looking for Evil")
-
-                for line in f:
-                    line = line.lower()
-                    try:
-
-                        if "process_name" in line:
-                            proc_name = str(line.split(": ")[1]).strip()
-
-                        if "integrity" in line:
-                            integrity = str(line.split(": ")[1]).strip()
-
-                        if "operation" in line:
-                            operation = str(line.split(": ")[1]).strip()
-
-                        if "original_cmd" in line:
-                            orig_cmd = str(line.split(": ")[1]).strip()
-                        
-                        if "path" in line:
-                            clean_cmd = str(line.split(": ")[1]).strip()
-
-                        # Determine Access
-                        if (
-                            permission_index >= 1
-                            and "--------end--------" not in line
-                        ):
-                            access += "\n" + str(line).strip()
-                            permission_index += 1
-                            user_full_control = self.__check_permission(line)
-                            if user_full_control:
-                                add = True
-
-                        if (
-                            "access:" in line
-                        ):  # Check if we are at the ACCESS portion:
-                            access += line.split("access:")[1].strip()
-                            permission_index += 1  # Denote which permission we are at
-                            user_full_control = self.__check_permission(line)
-                            if user_full_control:
-                                add = True
-
-                        if "--------end--------" in line:
-
-                            if add:
-                                final_data = {
-                                    "Process_Name": proc_name, 
-                                    "Integrity": integrity,
-                                    "Operation": operation,
-                                    "Accessed Object": clean_cmd,
-                                    "ACLs": access
-                                    }
-                                df = df.append(final_data, ignore_index=True)
-                                fun_index += 1
-
-                            path = None
-                            owner = None
-                            group = None
-                            add = False
-                            permission_index = 0
-                            total_index += 1
-                            access = ""
-
-                        pbar.update(1)
-
-                    except Exception as e:
-                        pass
-                        pbar.update(1)
-                pbar.close()
-
-            df.to_excel(self.__final_report)
-            return fun_index
-
-        except Exception as e:
+            print(f"\n\n{obj}")
             self.__print_exception()
 
 
@@ -611,8 +461,7 @@ class analyze:
     # ===============================================#
     def get_error_count(self):
       try:
-        file_errors = self.__file_enum.error_index
-        reg_errors = self.__reg_enum.error_index
-        return (file_errors + reg_errors)
+        file_errors = self.__permission_enum.error_index
+        return file_errors
       except:
         self.__print_exception()

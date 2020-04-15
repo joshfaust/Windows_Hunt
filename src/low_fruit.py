@@ -11,7 +11,7 @@ from winreg import *
 from tqdm import tqdm
 from bs4 import BeautifulSoup
 from colorama import Fore, init
-from . import windows_objects, filepaths, analyze, registry
+from . import windows_objects
 init()
 
 # --------------------------------------------------#
@@ -20,7 +20,6 @@ init()
 # Author:   @jfaust0                                #
 # Website:  sevrosecurity.com                       #
 # --------------------------------------------------#
-
 
 
 class low_haning_fruit:
