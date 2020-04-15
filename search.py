@@ -36,61 +36,7 @@ def print_exception():
 
 
 def testing():
-    '''
-    cmd = {
-    "proc_name" : proc_name, 
-    "orig_cmd"  : orig_cmd, 
-    "clean_cmd" : clean_cmd,
-    "operation" : operation,
-    "integrity" : integrity
-    }
-    '''
-    all = []
-    p  = permissions.permissions(".")
-    paths = [
-        "c:\\windows\\microsoft.net\\framework64\\v4.0.30319\\clr.dll",
-        "hklm\\software\\microsoft\\windows\\currentversion\\explorer\\desktop\\namespace",
-        "hklm\\software\\policies\\binary fortress software\\displayfusion",
-        "hklm\\software\\binary fortress software\\displayfusion",
-        "hklm\\software\\microsoft\\windows\\currentversion\\explorer\\usersfiles\\namespace",
-        "hklm\\software\\microsoft\\windows\\currentversion\\explorer\\allowedenumeration",
-        "hklm\\software\\microsoft\\windows nt\\currentversion\\terminal server",
-        "hklm\\software\\microsoft\\windows nt\\currentversion\\profilelist\\s-1-5-21-2842599707-1896506431-2237290089-1001\\fdeploy",
-        "hklm\\software\\microsoft\\windows\\currentversion\\explorer\\folderdescriptions\\{c4900540-2379-4c75-844b-64e6faf8716b}",
-        "c:\\users\\joshua\\appdata\\local\\temp\\procmon64.exe",
-        "hklm\\software\\microsoft\\windows\\currentversion\\explorer\\mycomputer\\namespace",
-        "hklm\\software\\microsoft\\windows\\currentversion\\explorer\\usersfiles\\namespace\\delegatefolders"
-            ]
-
-    for i, path in enumerate(paths):
-        cmd = {
-            "proc_name" : "a", 
-            "orig_cmd"  : "b", 
-            "clean_cmd" : path,
-            "operation" : "c",
-            "integrity" : "d"
-            } 
-
-        if ("hklm" in path):
-            data = p.get_registry_key_acl_procmon(cmd)
-            all.append(data)
-        else:
-            data = p.get_file_path_acl_procmon(cmd)
-            all.append(data)
-
-    i = 0
-    for line in all:
-        individual_record = dict(line)
-        # We know that the error length is 3
-        if (len(individual_record) > 3):
-            perms = individual_record["acls"]
-            perms = perms.split("\n")
-            for line in perms:
-                print(f"{i}--{line}")
-                i+=1
-
-
-        
+    pass
 
 
 
@@ -100,9 +46,6 @@ def testing():
 if __name__ == "__main__":
     try:
         
-        #testing()
-        #exit(0)
-
         parser = argparse.ArgumentParser()
         me = parser.add_mutually_exclusive_group()
         me.add_argument(
@@ -184,8 +127,8 @@ if __name__ == "__main__":
 
         if (args.analysis_path != None):
             a = analyze.analyze(args.o)                                         # Analysis Class Object
-            total_analyzed = a.build_command_list_path(args.threads, args.analysis_path)
-            interesting_items = a.analyze_acls_procmon("path")
+            total_analyzed = a.build_command_list_path(args.t, args.analysis_path)
+            interesting_items = a.analyze_acls_path()
 
             print("-" * 125)
             print(f"\n[i] A total of {total_analyzed} objects Were Analyzed.")
@@ -217,6 +160,11 @@ if __name__ == "__main__":
             registry_tab_name = registry_analysis["name"]
             registry_report = registry_analysis["dataframe"]
 
+            # Analyze Event Message Logging DLLs:
+            message_analysis = low.message_event_analysis()
+            message_tab_name = message_analysis["name"]
+            message_report = message_analysis["dataframe"]
+
             # Analyze all files for credentials
             credential_analysis = low.look_for_credentials()
             credential_tab_name = credential_analysis["name"]
@@ -227,6 +175,7 @@ if __name__ == "__main__":
             with pd.ExcelWriter(f"{args.o}/Priv_Esc_Analysis.xlsx") as writer:
                 services_report.to_excel(writer, sheet_name=services_tab_name)
                 tasks_report.to_excel(writer, sheet_name=tasks_tab_name)
+                message_report.to_excel(writer, sheet_name=message_tab_name)
                 registry_report.to_excel(writer, sheet_name=registry_tab_name)
                 credential_report.to_excel(writer, sheet_name=credential_tab_name)
 
@@ -248,7 +197,7 @@ if __name__ == "__main__":
             print(f"\n[i] Credential Analysis:")
             print(f"\t+ {credential_analysis['total_cred_files']} Files found to possibly contain Passwords/Credentials")
 
-            print(f"[i] Final Report: {args.o}/Priv_Esc_Analysis.xlsx")
+            print(f"\n[i] Final Report: {args.o}Priv_Esc_Analysis.xlsx")
             
         exit(0)
 

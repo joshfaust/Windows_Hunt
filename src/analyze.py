@@ -350,12 +350,18 @@ class analyze:
         except Exception as e:
             self.__print_exception()
 
-    # ==============================================#
-    # Purpose: analyzes the filepaths or registry   #
-    # class looking for abusable permissions        #
-    #                                               #
-    # Return: int - # of suspect permissions        #
-    # ==============================================#
+    # ==========================================================#
+    # Purpose:  Reviews all the dictionary objects stored in    #
+    #           __procmon_analysis. This function is dedicated  #
+    #           to reviewing only the procmon data to determine #
+    #           if weak/bad permissions are resident on objects #
+    #           that may be use to elevate privileges. After    #
+    #           the full analysis, a final report is written to #
+    #           disk detailed all objects that a user has       #
+    #           control                                         #
+    #           over.                                           #
+    # Return: int - number of weak permissions found            #
+    # ==========================================================#
     def analyze_acls_procmon(self):
         try:
 
@@ -417,13 +423,60 @@ class analyze:
             self.__print_exception()
 
 
-    # ==============================================#
-    # Purpose: Given a list of ACL's, enumerate if  #
-    # we have control over the object via a         # 
-    # low-priv account                              #
-    #                                               #
-    # Return: Boolean                               #
-    # ==============================================#
+    # ==========================================================#
+    # Purpose:  Used during the (-f, --files) flagwhich,        # 
+    #           analyzes all files given a  starting path. ACLs #
+    #           are pulled for each path/file and saved to the  #
+    #           class variable __path_analysis. This function   #
+    #           uses the __path_analysis variable to enumerate  #
+    #           weak/bad permissions on a file-by-file basis and#
+    #           saves the output to an excel document           #  
+    #                                                           #
+    # Return: Integer - count of all weak permissions found     #
+    # ==========================================================#
+    def analyze_acls_path(self):
+        try:
+            output_df = pd.DataFrame(columns=["Path", "Permissions"])
+            add_index = 0
+
+            for obj in self.__path_analysis:        # For each dictionary in __path_analysis
+                acls = ""                           # Placeholder for ACL's string
+                add = False                         # Dictate if bad permission we found
+                acl_dict = dict(obj)                # Typecast into a dict() object
+
+                if (acl_dict["error"] == None):     # If the ACL enumeration contained no errors
+                    parsed_access = acl_dict["acls"]
+                    
+                    for line in parsed_access:      # Check each ACL line for weak permissions
+                        if (user_full_control := self.__check_permission(line)):
+                            add = user_full_control
+                            break;
+                    
+                    if add:
+                        for line in parsed_access:
+                            acls += line + "\n"
+
+                        final_data = {
+                            "Path": acl_dict["file_path"],
+                            "Permissions": acls
+                        }
+                        output_df = output_df.append(final_data, ignore_index=True)
+                        add_index += 1
+
+            output_df.to_excel(f"{self.__output_dir}/weak_path_permissions.xlsx")
+            return add_index
+
+        except Exception as e:
+            self.__print_exception()
+
+
+    # ==========================================================#
+    # Purpose:  Given a list of ACL's, enumerate each ACL to    # 
+    #           check for weak/bad permission on the file in    #
+    #           question. If the ACL's are weak, return a bool  #
+    #                                                           #
+    # Return:   Boolean                                         #
+    # ==========================================================#
     def analyze_acls_from_list(self, acl_list):
         try:
             add = False  # Placeholder to determine if user has full permissions
@@ -431,9 +484,9 @@ class analyze:
             for line in acl_list:
                 line = line.lower()
 
-                user_full_control = self.__check_permission(line)
-                if user_full_control:
-                    add = True
+                if (user_full_control := self.__check_permission(line)):
+                    add = user_full_control
+                    break;
 
             return add
 

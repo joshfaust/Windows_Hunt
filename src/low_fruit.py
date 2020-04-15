@@ -11,7 +11,7 @@ from winreg import *
 from tqdm import tqdm
 from bs4 import BeautifulSoup
 from colorama import Fore, init
-from . import windows_objects
+from . import windows_objects, permissions, analyze
 init()
 
 # --------------------------------------------------#
@@ -28,6 +28,8 @@ class low_haning_fruit:
         self.name = "Low Hangning Fruit"
         self.__output_dir = o_dir
         self.__windows_objects = windows_objects.windows_services_and_tasks()
+        self.__perms = permissions.permissions(self.__output_dir)
+        self.__analysis = analyze.analyze(self.__output_dir)
         self.__windows_file_path = re.compile(r"^([A-Za-z]):\\((?:[A-Za-z\d][A-Za-z\d\- \x27_\(\)~]{0,61}\\?)*[A-Za-z\d][A-Za-z\d\- \x27_\(\)]{0,61})(\.[A-Za-z\d]{1,6})?")
         self.__password_regex = re.compile(r"(?i)(adminpassword|password|pass|login|creds)( |)(=|:).*")
         self.__username = str(getpass.getuser()).lower()
@@ -45,7 +47,6 @@ class low_haning_fruit:
     def registry_analysis(self):
         try:
             df = pd.DataFrame(columns=["Root_Key_Name", "Root_Key_Values", "Sub_Keys", "Sub_Key_Values", "ACLS"])
-            r = registry.registry_enumeration(self.__output_dir, False)
             
             registry_keys = [
                 "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\Currentversion\Winlogon",
@@ -137,12 +138,14 @@ class low_haning_fruit:
                         CloseKey(self.__sub_key_handle)                     # Close the sub_key handle
 
                 if (key_exists):
+                    key_acl_dict = self.__perms.get_registry_key_acl(root_key)
+                    acls = key_acl_dict["acls"]
                     final_data = {
                         "Root_Key_Name": root_key.strip(),
                         "Root_Key_Values": root_key_values, 
                         "Sub_Keys": sub_key_names,
                         "Sub_Key_Values": sub_key_values,
-                        "ACLS": r.get_acl_list_return(root_key)
+                        "ACLS": acls
                         }
 
                     df = df.append(final_data, ignore_index=True)
@@ -296,10 +299,6 @@ class low_haning_fruit:
             last_result = ""
             next_run = ""
 
-            # Class Objects
-            fp = filepaths.filepath_enumeration(self.__output_dir, False)
-            an = analyze.analyze(self.__output_dir, False)
-
             # Windows Schedule.Service COM Object initialization
             scheduler = win32com.client.Dispatch("Schedule.Service")
             scheduler.Connect()
@@ -359,7 +358,8 @@ class low_haning_fruit:
 
                     # If the Command is not Unknown, obtain its ACL's for further analysis.
                     if task_command != "Unknown":
-                        acl_list = fp.get_acl_list_return(task_command)
+                        acl_dict = self.__perms.get_file_path_acl(task_command)
+                        acl_list = acl_dict["acls"]
 
                         for i, acl in enumerate(acl_list):
 
@@ -369,7 +369,7 @@ class low_haning_fruit:
                                 acls += f"{acl}\n"
 
                     # Analyze the Commands ACL values for access rights issues / vulns.
-                    suspect_task = an.analyze_acls_from_list(acl_list)
+                    suspect_task = self.__analysis.analyze_acls_from_list(acl_list)
                     if suspect_task:
                         vuln_perms += 1
                         if (task_name not in vuln_tasks):
@@ -421,10 +421,6 @@ class low_haning_fruit:
     # ====================================================#
     def analyze_all_services(self):
         try:
-
-            fp = filepaths.filepath_enumeration(self.__output_dir, False)
-            an = analyze.analyze(self.__output_dir, False)
-
 
             df = pd.DataFrame(columns=["Short Name","Long Name", "Service Type", "Start Type", "Dependencies", "Full Command", "Bin Path", "ACLS", "Vulnerable Permissions", "Can Edit Binpath", "Is Unquoted Path"])
             total_services = 0  # Total Number of services
@@ -491,7 +487,9 @@ class low_haning_fruit:
                     service_bin_path[1] + service_bin_path[2])
 
                 # Analyze ACL's for the Bin Path:
-                acl_list = fp.get_acl_list_return(service_bin_path)
+                #acl_list = fp.get_acl_list_return(service_bin_path)
+                acl_dict = self.__perms.get_file_path_acl(service_bin_path)
+                acl_list = acl_dict["acls"]
                 for i, acl in enumerate(acl_list):
 
                     if i == (len(acl_list) - 1):
@@ -500,7 +498,7 @@ class low_haning_fruit:
                         acls += f"{acl}\n"
 
                 # Check for bad ACL permissions:
-                suspect_service = an.analyze_acls_from_list(acl_list)
+                suspect_service = self.__analysis.analyze_acls_from_list(acl_list)
                 if suspect_service:
                     vuln_perms += 1
                     if service_short_name not in vuln_services:
@@ -561,10 +559,108 @@ class low_haning_fruit:
             self.__print_exception()
             exit(1)
 
-    # ==============================================#
-    # Purpose: Clean Exception Printing             #
-    # Return: None                                  #
-    # ==============================================#
+
+
+    # ==========================================================#
+    # Purpose:  Event Message Files (DLL's) are used by various #
+    #           programs (many running as SYSTEM) to write logs #
+    #           that can be viewed in Event Viewer. This        #
+    #           function enumerates the DLL's associated to     #
+    #           programs who have registered a DLL to log events#
+    #           If a user has access to change such a DLL, an   #
+    #           escalation of privileges is highly likely.      #
+    # Return:   Dictionary of several objects                   #
+    # ==========================================================#
+    def message_event_analysis(self):
+        try:
+            interesting_keys = ["CategoryMessageFile", "EventMessageFile"]          # These are keys that hold DLL paths
+            key = "SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application"      # Reg Key Path for MessageEvent DLL's/EXE's
+            reg_handle = ConnectRegistry(None, HKEY_LOCAL_MACHINE)                  # Handle to the registry
+            df = pd.DataFrame(columns=[
+                "reg_key", 
+                "sub_key_name", 
+                "sub_key_value", 
+                "key_value_acls"]
+                )                                   # DataFrame object to return          
+            sub_key_names = []                      # Hold all the sub_key names associated with key
+            acls = ''                               # Placeholder for string ACL's
+            vuln_perms = 0                          # Placeholder weak permissions counter
+            checked = 0                             # Placeholder for number of keys analyzed
+            system_root = os.getenv("SystemRoot")   # Swap out the %SystemRoot% with this lookup
+            
+            try:
+                # Open a key:
+                root_key_handle = OpenKey(reg_handle, key)
+            except Exception as e:
+                pass
+
+            # Obtain information about the root key:
+            total_sub_keys, total_key_values, last_modified_date = QueryInfoKey(root_key_handle)
+
+            # Enumerate sub_key names:
+            if (total_sub_keys != 0):
+                for i in range(total_sub_keys):
+                    sub_key_name = EnumKey(root_key_handle, i)
+                    sub_key_names.append(sub_key_name)
+
+            pbar = tqdm(total=len(sub_key_names))
+            pbar.set_description("Analyzing Event Message DLLs")
+            # For each sub_key, open a handle:
+            for _sub_key_name in sub_key_names:
+                sub_key_handle = OpenKey(root_key_handle, _sub_key_name)
+                _total_sub_keys, _total_key_values, _last_modified_date = QueryInfoKey(sub_key_handle)
+                key_name_final = f"HKLM\\{key}\\{_sub_key_name}"
+
+                # If the sub key has key values, we enumerate them
+                if (_total_key_values != 0):
+                    
+                    # for each key value, obtain the dll names
+                    for j in range(_total_key_values):
+
+                        _kv = EnumValue(sub_key_handle, j)      # sub key arrays           
+                        _value_name = list(_kv)[0]              # Value Name
+                        _key_value = list(_kv)[1]
+                        checked += 1
+
+                        if (_value_name in interesting_keys):   # if the current key name is in interesting keys
+                            
+                            if (';' in _key_value):
+                                _key_value = _key_value.split(';')[0]
+
+                            if ("%SystemRoot%" in _key_value ):
+                                _key_value = _key_value.replace("%SystemRoot%", system_root)    # replace %SystemRoot%
+
+                            acl_dict = self.__perms.get_file_path_acl(_key_value)           # Get the ACL's for the DLL/EXE
+                            acl_list = acl_dict["acls"]                                     # from dict to list
+                            acls = '\n'.join(acl_list)                                      # ACL list to string with \n endings
+
+                            # Check to see if there are weak permissions on the dll/exe object
+                            if (self.__analysis.analyze_acls_from_list(acl_list)):
+                                data = {
+                                    "reg_key": key_name_final,
+                                    "sub_key_name": _value_name,
+                                    "sub_key_value": _key_value,
+                                    "key_value_acls": acls
+                                }
+                                df = df.append(data, ignore_index=True)
+                                vuln_perms += 1
+                pbar.update(1)
+
+            return {
+                "name": "Message Event Analysis",
+                "dataframe": df,
+                "vuln_perms": vuln_perms
+            }
+
+        except Exception as e:
+            self.__print_exception()
+            exit(1)
+
+
+    # ==========================================================#
+    # Purpose: Clean Exception Printing                         #
+    # Return: None                                              #
+    # ==========================================================#
     def __print_exception(self):
         exc_type, exc_obj, tb = sys.exc_info()
         tmp_file = tb.tb_frame

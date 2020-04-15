@@ -295,7 +295,7 @@ class permissions:
     # Purpose:  obtains ACL values for a single file / filepath # 
     #           given a dict object that contains Procmon.exe   #
     #           attributes/data                                 #
-    # Return: Dictionary                                        #
+    # Return:   Dictionary                                      #
     # ==========================================================#
     def get_file_path_acl_procmon(self, path_dict):
         try:
