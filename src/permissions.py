@@ -15,7 +15,7 @@ from colorama import Fore, init
 from enum import Enum
 from . import windows_objects
 init()
-sys.setrecursionlimit(10000)
+
 
 class permissions:
 

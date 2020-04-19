@@ -4,7 +4,9 @@ import csv
 import argparse
 import linecache
 import pandas as pd
-from src import analyze, low_fruit, permissions
+from io import StringIO
+from tabulate import tabulate
+from src import analyze, low_fruit, permissions, reporting
 from colorama import Fore, init
 init()
 
@@ -36,7 +38,9 @@ def print_exception():
 
 
 def testing():
-    pass
+    l = low_fruit.low_haning_fruit("./out")
+    l.path_analysis()
+    exit(0)
 
 
 
@@ -46,6 +50,8 @@ def testing():
 if __name__ == "__main__":
     try:
         
+        #testing()
+
         parser = argparse.ArgumentParser()
         me = parser.add_mutually_exclusive_group()
         me.add_argument(
@@ -73,6 +79,14 @@ if __name__ == "__main__":
             dest="fruit",
             required=False,
             help="Run a full analysis (Low Hanging Fruit)"
+        )
+        parser.add_argument(
+            "-r",
+            "--report",
+            default="excel",
+            dest="report",
+            required=False,
+            help="Output Format of Final Report [Excel, JSON]"
         )
         parser.add_argument(
             "-t",
@@ -142,62 +156,25 @@ if __name__ == "__main__":
 
         if (args.fruit):
             low = low_fruit.low_haning_fruit(args.o)
+            rep = reporting.report(args.report, args.o)
             
             # Analyze System Services
             service_analysis = low.analyze_all_services()
-            services_tab_name = service_analysis["name"]
-            services_report = service_analysis["dataframe"]
-            vulnerable_services = service_analysis["vuln_services"]
-
             # Analyze Scheduled Tasks
             tasks_analysis = low.analyze_scheduled_tasks()
-            tasks_tab_name = tasks_analysis["name"]
-            tasks_report = tasks_analysis["dataframe"]
-            vulnerable_tasks = tasks_analysis["vuln_tasks"]
-
             # Analyze Registry Keys:
             registry_analysis = low.registry_analysis()
-            registry_tab_name = registry_analysis["name"]
-            registry_report = registry_analysis["dataframe"]
-
             # Analyze Event Message Logging DLLs:
             message_analysis = low.message_event_analysis()
-            message_tab_name = message_analysis["name"]
-            message_report = message_analysis["dataframe"]
-
             # Analyze all files for credentials
             credential_analysis = low.look_for_credentials()
-            credential_tab_name = credential_analysis["name"]
-            credential_report = credential_analysis["dataframe"]
-
-
-            # Write Final Report:
-            with pd.ExcelWriter(f"{args.o}/Priv_Esc_Analysis.xlsx") as writer:
-                services_report.to_excel(writer, sheet_name=services_tab_name)
-                tasks_report.to_excel(writer, sheet_name=tasks_tab_name)
-                message_report.to_excel(writer, sheet_name=message_tab_name)
-                registry_report.to_excel(writer, sheet_name=registry_tab_name)
-                credential_report.to_excel(writer, sheet_name=credential_tab_name)
-
-            print("-" * 125)
-            print(f"[i] Windows Services:")
-            print(f"\t+ Total Numer of Windows Services: {service_analysis['total_services']}")
-            print(f"\t+ {service_analysis['vuln_perms']} Services have suspect/vulnerable ACL's.")
-            print(f"\t+ {service_analysis['vuln_conf']} Services can have their binpath changed by a standard user.")
-            print(f"\t+ {service_analysis['vuln_unquote']} Services have unquoted service paths (Hijack Execution Flow)")
-            if (len(vulnerable_services) != 0):
-                print(f"\t+ All Vulnerable Services: {vulnerable_services}")
-
-            print(f"\n[i] Windows Scheduled Tasks:")
-            print(f"\t+ Total Number of Scheduled Tasks: {tasks_analysis['total_tasks']}")
-            print(f"\t+ {tasks_analysis['vuln_perms']} Services have suspect/vulnerable ACL's.")
-            if (len(vulnerable_services) != 0):
-                print(f"\t+ All Vulnerable Tasks: {vulnerable_tasks}")
             
-            print(f"\n[i] Credential Analysis:")
-            print(f"\t+ {credential_analysis['total_cred_files']} Files found to possibly contain Passwords/Credentials")
+            report_table = rep.generate_fruit_report(service_analysis, tasks_analysis, registry_analysis, message_analysis, credential_analysis)
+            print("\n\n")
+            print(tabulate(report_table, headers='keys', tablefmt="psql"))
+            
+            
 
-            print(f"\n[i] Final Report: {args.o}Priv_Esc_Analysis.xlsx")
             
         exit(0)
 

@@ -14,7 +14,7 @@ from colorama import Fore, init
 from . import windows_objects, permissions, analyze
 init()
 
-# --------------------------------------------------#
+# --------------------------------------------------#s
 # Name:     Low Hanging Fruit Class                 #
 # Purpose:  Conduct the overall DACL analysis       #
 # Author:   @jfaust0                                #
@@ -36,6 +36,37 @@ class low_haning_fruit:
         self.__reg_handle = None
         self.__key_handle = None
         self.__sub_key_handle = None
+
+
+    # ==========================================================#
+    # Purpose:  Analyzes the SYSTEM Path to enumerate trusted   #
+    #           locations on the file system. It then looks for #
+    #           the ability to write to these trusted paths     #
+    #           with hopes of obtaining privileged write access #
+    #           and possibly search order hijacking.            #
+    # Return:   dictionary                                      #
+    # ==========================================================#
+    def path_analysis(self):
+        try:
+            reg_path = r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+            reg_key = OpenKey(HKEY_LOCAL_MACHINE, reg_path)
+            system_environment_variables = QueryValueEx(reg_key, 'Path')[0]
+            system_environment_variables = system_environment_variables.split(";")
+
+            for path in system_environment_variables:
+                acl_dict = self.__perms.get_file_path_acl(path)
+                acl_list = acl_dict["acls"]
+                bad_perms = self.__analysis.analyze_acls_from_list(acl_list)
+                if (bad_perms):
+                    print(path, bad_perms)
+
+            exit(0)
+
+        except Exception as e:
+            print(e)
+            self.__print_exception()    
+
+
 
     # ======================================================#
     # Purpose: Reviews registry keys that have been known   #
@@ -158,7 +189,8 @@ class low_haning_fruit:
             CloseKey(self.__sub_key_handle)
 
             return {
-                "name": "Registry Key Analysis", 
+                "name": "Registry Key Analysis",
+                "description": "Analyze common misconfigured registry keys", 
                 "dataframe": df
                 }
 
@@ -230,6 +262,7 @@ class low_haning_fruit:
                     if (add):
                         interim_data = {"File_Path": file_path, "Possible_Credentials": found_creds}
                         df = df.append(interim_data, ignore_index=True)
+                        found_cred_files +=1 
 
                     # Clean the creds for the next interation. 
                     found_creds = ""
@@ -242,6 +275,7 @@ class low_haning_fruit:
             
             return {
                 "name":"File Credential Analysis",
+                "description": "Analyze all files from C:\\ and search for credentials", 
                 "dataframe": df, 
                 "total_cred_files": found_cred_files
                 }
@@ -398,6 +432,7 @@ class low_haning_fruit:
 
             return {
                 "name": "Scheduled Task Analysis",
+                "description": "Analyze all Scheduled tasks for weak binpath ACLs",
                 "dataframe": df,
                 "total_tasks": total_tasks,
                 "vuln_tasks": vuln_tasks,
@@ -547,6 +582,7 @@ class low_haning_fruit:
 
             return {
                 "name": "Service Analysis",
+                "description": "Analyze all services for weak ACLs, ability to change bin-path, and unquoted paths", 
                 "dataframe": df,
                 "total_services": total_services,
                 "vuln_perms": vuln_perms,
@@ -648,6 +684,7 @@ class low_haning_fruit:
 
             return {
                 "name": "Message Event Analysis",
+                "description": "Analyze Message Event DLL Permissions to check for search order hijacking",
                 "dataframe": df,
                 "vuln_perms": vuln_perms
             }
