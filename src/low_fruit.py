@@ -17,7 +17,7 @@ init()
 # --------------------------------------------------#s
 # Name:     Low Hanging Fruit Class                 #
 # Purpose:  Conduct the overall DACL analysis       #
-# Author:   @jfaust0                                #
+# Author:   @cribdragg3r                            #
 # Website:  sevrosecurity.com                       #
 # --------------------------------------------------#
 

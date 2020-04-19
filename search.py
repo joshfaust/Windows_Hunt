@@ -4,9 +4,8 @@ import csv
 import argparse
 import linecache
 import pandas as pd
-from io import StringIO
 from tabulate import tabulate
-from src import analyze, low_fruit, permissions, reporting
+from src import analyze, low_fruit, reporting
 from colorama import Fore, init
 init()
 
@@ -112,6 +111,12 @@ if __name__ == "__main__":
         if not os.path.exists(args.o):
             print(f"[!] {args.o} does not exist")
             exit(1)
+        
+        # Check report type:
+        good_types = ["excel","json"]
+        if (str(args.report).lower() not in good_types):
+            print(f"[!] Error: output report type {args.report} is not supported. Use json or excel.")
+            exit(1)
 
 
         if (args.p != None):
@@ -130,11 +135,9 @@ if __name__ == "__main__":
             
             print("-" * 125)
             print(f"\n[i] A total of {total_analyzed} objects Were Analyzed.")
-            print(f"[i] {interesting_items} Were found to have Write or FullContol Permissions.")
+            print(f"[i] {interesting_items} Were found to have Write or Fullcontol Permissions.")
             print(f"[i] {a.get_error_count()} ERRORS occurred during the analysis.")
             print("[i] Output Files:")
-            print(f"\t+ {args.o}raw_acls.txt:\t\tRaw output of Access Control Listings")
-            print(f"\t+ {args.o}cleaned_paths.txt:\tCleaned Up procmon output (de-duplication)")
             print(f"\t+ {args.o}evil.xlsx:\t\tKeys denoted as improperly configured/interesting")
             print(f"\t+ {args.o}errors.txt:\t\tDetails of all errors observed")
 
@@ -149,7 +152,6 @@ if __name__ == "__main__":
             print(f"[i] {interesting_items} Were found to have Write or FullContol Permissions.")
             print(f"[i] {a.get_error_count()} ERRORS occurred during the analysis.")
             print("[i] Output Files:")
-            print(f"\t+ {args.o}raw_acls.txt:\t\tRaw output of Access Control Listings")
             print(f"\t+ {args.o}evil.xlsx:\t\tKeys denoted as improperly configured/interesting")
             print(f"\t+ {args.o}errors.txt:\t\tDetails of all errors observed")
 
@@ -167,14 +169,12 @@ if __name__ == "__main__":
             # Analyze Event Message Logging DLLs:
             message_analysis = low.message_event_analysis()
             # Analyze all files for credentials
+            #credential_analysis = {}
             credential_analysis = low.look_for_credentials()
             
             report_table = rep.generate_fruit_report(service_analysis, tasks_analysis, registry_analysis, message_analysis, credential_analysis)
             print("\n\n")
             print(tabulate(report_table, headers='keys', tablefmt="psql"))
-            
-            
-
             
         exit(0)
 

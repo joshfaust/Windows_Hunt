@@ -10,10 +10,17 @@ class report:
 
     def __init__(self, report_format, o_dir):
         self.name = "Report Generation"
-        self.__report_format = report_format
+        self.__report_format = report_format.lower()
         self.__output_dir = o_dir
         
-
+    # ==========================================================#
+    # Purpose:  Takes several dictionaries from the low_fruit   #
+    #           analysis and compiles a file report in one of   #
+    #           two formats (Excel, JSON). It also builds a     #
+    #           dataframe that is a very high-level view of the # 
+    #           overall analysis                                #
+    # Return:   dataframe                                       #
+    # ==========================================================#
     def generate_fruit_report(self, services: dict, tasks: dict, registry: dict, message_events: dict, creds: dict):
         try:
             fruit_report = pd.DataFrame(columns=["Analysis", "Description", "Analysis Type", "Issues Found"])
@@ -23,7 +30,6 @@ class report:
             services_desc = services["description"]
             services_report = services["dataframe"]
             services_total = services["total_services"]
-            serices_vuln_services = services["vuln_services"]
             services_vuln_perms = services["vuln_perms"]
             services_vuln_conf = services["vuln_conf"]
             services_vuln_unquote = services["vuln_unquote"]
@@ -103,22 +109,23 @@ class report:
                 "Analysis Type": "Possible Credentials Files",
                 "Issues Found": credential_found}, ignore_index=True)
 
-
-            if (self.__report_format.lower() == "excel"):
-                # Write Final Report:
+            # Write Final Report Excel:
+            if (self.__report_format == "excel"):
                 with pd.ExcelWriter(f"{self.__output_dir}/Priv_Esc_Analysis.xlsx") as writer:
+                    fruit_report.to_excel(writer, sheet_name="totals")
                     services_report.to_excel(writer, sheet_name=services_name)
                     tasks_report.to_excel(writer, sheet_name=tasks_name)
                     message_report.to_excel(writer, sheet_name=message_name)
                     registry_report.to_excel(writer, sheet_name=registry_name)
                     credential_report.to_excel(writer, sheet_name=credential_name)
 
-            if (self.__report_format.lower() == "json"):
-                    services_report.to_json(f"{self.__output_dir}/{services_name}.json", orient="table")
-                    tasks_report.to_json(f"{self.__output_dir}/{tasks_name}.json", orient="table")
-                    message_report.to_json(f"{self.__output_dir}/{message_name}.json", orient="table")
-                    registry_report.to_json(f"{self.__output_dir}/{registry_name}.json", orient="table")   
-                    credential_report.to_json(f"{self.__output_dir}/{credential_name}", orient="table")   
+            # Write Final Reports JSON:
+            if (self.__report_format == "json"):
+                    services_report.to_json(f"{self.__output_dir}/{services_name.replace(' ', '_')}.json", orient="table")
+                    tasks_report.to_json(f"{self.__output_dir}/{tasks_name.replace(' ', '_')}.json", orient="table")
+                    message_report.to_json(f"{self.__output_dir}/{message_name.replace(' ', '_')}.json", orient="table")
+                    registry_report.to_json(f"{self.__output_dir}/{registry_name.replace(' ', '_')}.json", orient="table")   
+                    credential_report.to_json(f"{self.__output_dir}/{credential_name.replace(' ', '_')}.json", orient="table")   
 
             return fruit_report
 
