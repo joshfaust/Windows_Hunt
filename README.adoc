@@ -1,57 +1,84 @@
-= Process Information Hunter
+= Windows Hunt
 <joshua.faust@sevrosecurity.com>
 v1.0.0
 :toc:
 
 == Concept
-Generate a Procmon.exe dump in CSV format that contains all .dll, .exe, and HKLM registry keys that were generated or access by either a High or System integrity context. `Configuration locataion: config/`.
+This tool/package is designed to help Analyze/Hunt Windows Systems for misconfigurations, exposed credentials, privilege escalation paths, and much more. 
 
-With this CSV, I needed to enumerate the DACLs of each object in a clean and effecient manner. This is what this repository does using `win32api`. 
+This is *not* a Post-Exploitation tool considering Python is not native to Windows Systems unless you want to be load as hell to install Python and subsequent packages. This was designed be used more as a Hunt Tool for your Home / Company system builds and environments. 
 
+=== Capabilities
 
-[code, raw]
-----
-+---------------------------------------------------------------+
-| python3 search.py -p <procmon_data.csv> -o <output_dir> -t 23 |
-+---------------------------+-----------------------------------+
-                            |
-        +-------------------v---------------------+       +--------------------------------+
-        |Parse Procmon: analyze.parse_procmon_csv |       |   filepaths.get_acl_list()     |
-        |Output:        cleaned_paths.txt         |   +--->              or                |
-        +-------------------+---------------------+   |   |    registry.get_acl_list()     |
-                            |                         |   +---------------+----------------+
-        +-------------------v---------------------+   |                   |
-        | Analyze Paths/Keys in cleaned_paths.txt |   |   +---------------v----------------+
-        +-------------------+---------------------+   |   |  filepaths.__write_to_file()   |
-                            |                         |   |              or                |
-        +-------------------v---------------------+   |   |   registry.__write_to_file()   |
-        |       analyze.build_command_list()      |   |   |                                |
-        +-------------------+---------------------+   |   |Output:  raw_acls.txt           |
-                            |                         |   +----------------+---------------+
-        +-------------------v---------------------+   |                    |
-        |       analyze.__thread_commands()       +---+                    |
-        +-----------------------------------------+                        |
-                                                                           |
-        +-----------------------------------------+                        |
-        |         analyze.analyze_acls()          +<-----------------------+
-        |Output: evil.xlsx                        |
-        +-----------------------------------------+
+. Procmon.exe output Analysis to hunt for weak ACLs on all loaded / access objects.
+. Recursive ACL analysis given a path (i.e., C:\Program Files) to report on weak permissions.
+. Low Hanging Fruit Analysis:
+.. _Analyze Windows Services_ - Unquoted Service Paths, Can user edit `binpath`, and ACL analysis.
+.. _Analyze Windows Scheduled Tasks_ - ACL analysis on Task Command (i.e., can we edit it?)
+.. _Analyze Known Registry Keys_ - Looks for registry keys known to harbor credentials / juicy data.
+.. _Analyze Message Event Dlls_ - Check ACL permissions on all Message Event Dlls within the Registry.
+.. _Full System Scan for Credentials_ - Recursively enumerates several file types (ini, txt, conf, etc.) and looks for passwords.
+. Report Generation in either JSON or EXCEL
 
-----
 
 == Usage
 
 [code, raw]
 ----
-usage: search.py [-h] [-p  | -a ] [-t] -o
+usage: search.py [-h] [-p  | -f  | -F] [-r] [-t] -o
 
 optional arguments:
   -h, --help       show this help message and exit
   -p, --procmon    Path to the Procmon Output File (CSV)
-  -a, --acl        Analyze a singular acls.txt file
+  -f, --files      Analyze all files (Recursive) given a path
+  -F, --fruit      Run a full analysis (Low Hanging Fruit)
+  -r, --report     Output Format of Final Report [Excel, JSON]
   -t, --threads    Defined number of threads (Max 100). Default=10
   -o, --out        Output location for results.
 ----
 
-* Example:
-** _python3 search.py -p procmon_output.csv -o /tmp/output_
+=== Resources
+
+Within the directory there are three (3) different files:
+
+. *namenotfound.pmg* - Procmon.exe configruation to hunt for Name Not Found corresponding to DLLs.
+. *priv-esc-hunt* - Review all SYSTEM and HIGH intgreity processes, enumerate HKLM keys, DLLs, and EXEs accessed/loaded.
+. *hijack.dll* - 32-bit DLL developed in C++ that presents a MessageBox that displays _Hijacked_ if the DLL is loaded. Useful for a quick PoC. 
+
+=== Hunt Topics
+
+* *Analyze a Process Chain* - A user can utilize `Procmon.exe` to analyze a massive set of processes or narrow very granularity on much smaller scope (i.e., one process). Once the user has determined enough data has been captured, the final Procmon capture can be dumped to a CSV file and loaded into `Search.py` for a full ACL analysis.
+** *Command:* _python3 search.py -p procmon_output.csv -o <outdir>_
+** *Purpose:* Analyze processes and loaded objects (i.e., HKLM, DLL's, EXE's, etc.), review them to determine misconfigurations and weak ACL permissions. This is incredibly useful to determine boot vulnerabilities as well as individual software ACL vulnerabilities. 
+** *Report:* Excel Document
++++
+<br>
+<p align="center">
+<img src="docs/procmon_report.png" alt="Procmon Analysis" width="100%" height="100%"/>
+</p>
+<br>
++++
+
+* *Recursive ACL Analysis* - Given a file path, enumerate all directories and files, pull their ACLs, review for weak permissions.
+** *Command:* _python search.py -f "C:\Program Files (x86)" -o <outdir>_
+** *Purpose:* Look for directories and files that have weak permissions. This feature is designed to hunt for possible privilege escallation paths such as the link:https://remoteawesomethoughts.blogspot.com/2019/05/windows-10-task-schedulerservice.html[Task Manager DLL Hijack].
+** *Report:* Excel Document
++++
+<br>
+<p align="center">
+<img src="docs/acl_analysis.png" alt="ACL Analysis" width="100%" height="100%"/>
+</p>
+<br>
++++
+
+* *Low Hanging Fruit* - Conducts a number of checks that most attackers enumerate during post-exploitation. This is the easily overlooked / misconfiguration checks. 
+** *Command:* _python search.py -F -o <outdir> -r [JSON,EXCEL]_
+** *Purpose:* Look for all the simple yet, highly probable, misconfigurations, weak permissions, exposed credentials within System Services, Tasks, Registry Keys, Dlls and known configuration file types.
+** *Report:* JSON or EXCEL
++++
+<br>
+<p align="center">
+<img src="docs/low_fruit_report.png" alt="Low Hanging Fruit" width="100%" height="100%"/>
+</p>
+<br>
++++

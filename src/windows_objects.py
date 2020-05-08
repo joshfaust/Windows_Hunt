@@ -7,7 +7,7 @@ from enum import Enum
 #-----------------------------------------------------#
 # Name:     Windows Objects Class                     #
 # Purpose:  Contains permission bitmasks / sets       #
-# Author:   @jfaust0                                  #
+# Author:   @cribdragg3r                              #
 # Website:  sevrosecurity.com                         #
 # API: http://timgolden.me.uk/pywin32-docs/win32.html #
 #-----------------------------------------------------#
