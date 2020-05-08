@@ -111,8 +111,8 @@ class report:
 
             # Write Final Report Excel:
             if (self.__report_format == "excel"):
-                with pd.ExcelWriter(f"{self.__output_dir}/Priv_Esc_Analysis.xlsx") as writer:
-                    fruit_report.to_excel(writer, sheet_name="totals")
+                with pd.ExcelWriter(f"{self.__output_dir}/Low_Hanging_Fruit.xlsx") as writer:
+                    fruit_report.to_excel(writer, sheet_name="Totals")
                     services_report.to_excel(writer, sheet_name=services_name)
                     tasks_report.to_excel(writer, sheet_name=tasks_name)
                     message_report.to_excel(writer, sheet_name=message_name)
@@ -131,12 +131,6 @@ class report:
 
         except Exception as e:
             self.__print_exception()
-
-
-
-
-
-
 
 
     # ===============================================#

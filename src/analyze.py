@@ -68,6 +68,9 @@ class analyze:
             dataframe_length = input_dataframe.shape[0] # Size of procmon dataframe
             deduplication = (set())                     # holds hashes of previously added paths to avoid duplication
             path = ""                                   # placeholder for original paths (not cleaned)
+            base_path = ""                              # placeholder for base path without exe/dll, etc
+            clean_hash = ""                             # placeholder for clean hash value
+            base_hash = ""                              # placeholder for base hand value
             pbar = tqdm(total=dataframe_length)         # Progress Bar
             pbar.set_description("Analyzing Procmon Data")
 

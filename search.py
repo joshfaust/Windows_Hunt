@@ -10,18 +10,18 @@ from colorama import Fore, init
 init()
 
 
-# ---------------------------------------------------#
-# Windows Process Information:                      #
-# This script / set of scripts is designed to take  #
-# the CSV output of a Procmon.exe sessions and      #
-# analyze HKLM Registry keys, File, and Filepaths   #
-# that were accessed by a High/System integrity     #
-# context. The analysis is conducted by pulling the #
-# objects current DACL via the win32api.            #
-#                                                   #
-# Author: @Jfaust0                                  #
-# Site: SevroSecurity.com                           #
-# ---------------------------------------------------#
+# ==========================================================#
+# Windows Hunt: This script / set of scripts is designed    # 
+#               to take the CSV output of a Procmon.exe     # 
+#               sessions and analyze HKLM Registry keys,    #
+#               File, and Filepaths that were accessed by a #
+#               High/System integrity context. The analysis #
+#               is conducted by pulling the objects current #
+#               DACL via the win32api.                      #
+#                                                           #
+# Author:       @Jfaust0                                    #
+# Site:         SevroSecurity.com                           #
+# ==========================================================#
 
 
 def print_exception():
@@ -37,9 +37,7 @@ def print_exception():
 
 
 def testing():
-    l = low_fruit.low_haning_fruit("./out")
-    l.path_analysis()
-    exit(0)
+    pass
 
 
 
@@ -49,8 +47,6 @@ def testing():
 if __name__ == "__main__":
     try:
         
-        #testing()
-
         parser = argparse.ArgumentParser()
         me = parser.add_mutually_exclusive_group()
         me.add_argument(
@@ -83,6 +79,7 @@ if __name__ == "__main__":
             "-r",
             "--report",
             default="excel",
+            metavar="",
             dest="report",
             required=False,
             help="Output Format of Final Report [Excel, JSON]"
@@ -169,7 +166,6 @@ if __name__ == "__main__":
             # Analyze Event Message Logging DLLs:
             message_analysis = low.message_event_analysis()
             # Analyze all files for credentials
-            #credential_analysis = {}
             credential_analysis = low.look_for_credentials()
             
             report_table = rep.generate_fruit_report(service_analysis, tasks_analysis, registry_analysis, message_analysis, credential_analysis)
