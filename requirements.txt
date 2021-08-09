@@ -13,7 +13,7 @@ pandas==1.0.2
 pylint==2.4.4
 python-dateutil==2.8.1
 pytz==2019.3
-pywin32==227
+pywin32==301
 six==1.14.0
 tqdm==4.43.0
 wrapt==1.11.2
